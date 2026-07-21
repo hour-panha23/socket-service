@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NestJS Notifications WebSocket Test Harness</title>
+  <!-- Socket.io v4 Client -->
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+    body { background-color: #0f172a; color: #f8fafc; padding: 20px; margin: 0; }
+    .container { max-width: 900px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
+    .card { background-color: #1e293b; border-radius: 8px; padding: 16px; border: 1px solid #334155; }
+    h2, h3 { margin-top: 0; color: #38bdf8; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .full-width { grid-column: span 2; }
+    label { display: block; font-size: 12px; color: #94a3b8; margin-bottom: 4px; }
+    input { width: 100%; padding: 8px 12px; border-radius: 4px; border: 1px solid #475569; background: #0f172a; color: #fff; font-size: 14px; }
+    button { background-color: #0284c7; color: white; border: none; padding: 10px 16px; border-radius: 4px; cursor: pointer; font-weight: 600; margin-right: 8px; }
+    button:hover { background-color: #0369a1; }
+    button.success { background-color: #10b981; }
+    button.success:hover { background-color: #059669; }
+    button.danger { background-color: #dc2626; }
+    button.danger:hover { background-color: #b91c1c; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status { font-weight: bold; padding: 4px 8px; border-radius: 4px; display: inline-block; font-size: 13px; }
+    .status.connected { background-color: #059669; color: white; }
+    .status.disconnected { background-color: #dc2626; color: white; }
+    .status.connecting { background-color: #d97706; color: white; }
+    #logs { background-color: #090d16; font-family: monospace; height: 260px; overflow-y: auto; padding: 12px; border-radius: 6px; border: 1px solid #1e293b; font-size: 13px; }
+    .log-line { margin-bottom: 4px; border-bottom: 1px solid #1e293b; padding-bottom: 2px; word-break: break-all; }
+    .log-time { color: #64748b; }
+    .log-info { color: #38bdf8; }
+    .log-error { color: #f87171; }
+    .log-success { color: #4ade80; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h2>NestJS Notifications Gateway Test Harness</h2>
+
+  <!-- 1. JWT TOKEN GENERATOR -->
+  <div class="card">
+    <h3>1. Authentication (JWT Generator)</h3>
+    <div class="grid">
+      <div>
+        <label>User ID (sub)</label>
+        <input type="text" id="genSub" value="test_user_123" />
+      </div>
+      <div>
+        <label>JWT Secret (Must match backend .env)</label>
+        <input type="text" id="genSecret" value="your_jwt_secret" placeholder="e.g. supersecret123" />
+      </div>
+      <div class="full-width">
+        <button type="button" onclick="generateToken()">Generate Bearer Token</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. SERVER CONNECTION -->
+  <div class="card">
+    <h3>2. Socket.io Connection</h3>
+    <div class="grid">
+      <div class="full-width">
+        <label>Gateway URL (Port 4000 + /notifications namespace)</label>
+        <input type="text" id="serverUrl" value="http://localhost:4000/notifications" />
+      </div>
+      <div class="full-width">
+        <label>Bearer Token (auth.token)</label>
+        <input type="text" id="jwtToken" placeholder="Generate or paste JWT token..." />
+      </div>
+      <div class="full-width">
+        <button id="btnConnect" onclick="connect()">Connect</button>
+        <button id="btnDisconnect" class="danger" onclick="disconnect()" disabled>Disconnect</button>
+        <span style="margin-left: 10px;">Status: <span id="statusBadge" class="status disconnected">Disconnected</span></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. ROOM SCOPE OPERATIONS -->
+  <div class="card">
+    <h3>3. Room Scope Operations</h3>
+    <div class="grid">
+      <div>
+        <label>Project ID</label>
+        <input type="text" id="projectId" value="proj_siksara" />
+      </div>
+      <div>
+        <label>App ID</label>
+        <input type="text" id="appId" value="learning_hub" />
+      </div>
+      <div class="full-width">
+        <label>Room ID</label>
+        <input type="text" id="roomId" value="course_101" />
+      </div>
+      <div class="full-width">
+        <button onclick="joinRoom()">Join Hierarchical Rooms</button>
+        <button class="danger" onclick="leaveRoom()">Leave Room</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. HTTP BACKEND EMIT TRIGGER -->
+  <div class="card">
+    <h3>4. Trigger Backend Push Emit (HTTP Test)</h3>
+    <div class="grid">
+      <div>
+        <label>Event Name</label>
+        <input type="text" id="emitEvent" value="notification_received" />
+      </div>
+      <div>
+        <label>Message Content</label>
+        <input type="text" id="emitMessage" value="Hello room subscribers!" />
+      </div>
+      <div class="full-width">
+        <button class="success" onclick="triggerBackendEmit()">POST /notifications/test-emit</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. EVENT LOG CONSOLE -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <h3 style="margin: 0;">5. Live Event Console</h3>
+      <button onclick="clearLogs()" style="padding: 4px 8px; font-size: 12px;">Clear Logs</button>
+    </div>
+    <div id="logs"></div>
+  </div>
+</div>
+
+<script>
+  let socket = null;
+
+  // Restore stored credentials
+  document.getElementById('jwtToken').value = localStorage.getItem('ws_test_token') || '';
+  document.getElementById('genSecret').value = localStorage.getItem('ws_test_secret') || 'your_jwt_secret';
+
+  function log(message, type = 'info') {
+    const logsDiv = document.getElementById('logs');
+    const time = new Date().toLocaleTimeString();
+    const line = document.createElement('div');
+    line.className = 'log-line';
+    
+    let colorClass = 'log-info';
+    if (type === 'error') colorClass = 'log-error';
+    if (type === 'success') colorClass = 'log-success';
+
+    line.innerHTML = `<span class="log-time">[${time}]</span> <span class="${colorClass}">${message}</span>`;
+    logsDiv.appendChild(line);
+    logsDiv.scrollTop = logsDiv.scrollHeight;
+  }
+
+  function updateStatus(status) {
+    const badge = document.getElementById('statusBadge');
+    badge.className = `status ${status}`;
+    badge.innerText = status.charAt(0).toUpperCase() + status.slice(1);
+
+    document.getElementById('btnConnect').disabled = status === 'connected' || status === 'connecting';
+    document.getElementById('btnDisconnect').disabled = status === 'disconnected';
+  }
+
+  // --- 🔑 JWT GENERATOR (Web Crypto API) ---
+  async function generateToken() {
+    const sub = document.getElementById('genSub').value.trim();
+    const secret = document.getElementById('genSecret').value.trim();
+
+    if (!sub || !secret) {
+      log('Please fill in both User ID and Secret.', 'error');
+      return;
+    }
+
+    try {
+      const header = { alg: 'HS256', typ: 'JWT' };
+      const payload = {
+        sub: sub,
+        email: `${sub}@siksara.io`,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + (60 * 60 * 24) // 24 hours
+      };
+
+      const base64UrlEncode = (obj) => {
+        return btoa(JSON.stringify(obj))
+          .replace(/=/g, '')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_');
+      };
+
+      const encodedHeader = base64UrlEncode(header);
+      const encodedPayload = base64UrlEncode(payload);
+      const tokenData = `${encodedHeader}.${encodedPayload}`;
+
+      const encoder = new TextEncoder();
+      const keyData = encoder.encode(secret);
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw', keyData, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+      );
+
+      const signature = await crypto.subtle.sign('HMAC', cryptoKey, encoder.encode(tokenData));
+      const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+
+      const fullJwt = `${tokenData}.${encodedSignature}`;
+
+      document.getElementById('jwtToken').value = fullJwt;
+      localStorage.setItem('ws_test_token', fullJwt);
+      localStorage.setItem('ws_test_secret', secret);
+
+      log(`Generated JWT Token for [${sub}]!`, 'success');
+    } catch (err) {
+      log(`Failed to generate token: ${err.message}`, 'error');
+    }
+  }
+
+  // --- 🔌 SOCKET.IO CONNECTION ---
+  function connect() {
+    const serverUrl = document.getElementById('serverUrl').value.trim();
+    const token = document.getElementById('jwtToken').value.trim();
+
+    if (!token) {
+      log('JWT Token is required to connect.', 'error');
+      return;
+    }
+
+    localStorage.setItem('ws_test_token', token);
+    updateStatus('connecting');
+    log(`Connecting to ${serverUrl}...`);
+
+    socket = io(serverUrl, {
+      auth: { token },
+      transports: ['websocket'],
+      upgrade: false,
+      reconnectionAttempts: 3
+    });
+
+    socket.on('connect', () => {
+      updateStatus('connected');
+      log(`Connected! Socket ID: ${socket.id}`, 'success');
+    });
+
+    socket.on('connect_error', (error) => {
+      updateStatus('disconnected');
+      log(`Connection Error: ${error.message}`, 'error');
+    });
+
+    socket.on('disconnect', (reason) => {
+      updateStatus('disconnected');
+      log(`Disconnected: ${reason}`, 'error');
+    });
+
+    // Universal Event Listener for incoming broadcasts
+    socket.onAny((event, ...args) => {
+      log(`RECEIVED EVENT [${event}]: ${JSON.stringify(args)}`, 'success');
+    });
+  }
+
+  function disconnect() {
+    if (socket) {
+      socket.disconnect();
+      socket = null;
+      updateStatus('disconnected');
+      log('Manually disconnected.');
+    }
+  }
+
+  // --- 🏠 ROOM OPERATIONS ---
+  function joinRoom() {
+    if (!socket || !socket.connected) return log('Socket not connected', 'error');
+
+    const payload = {
+      projectId: document.getElementById('projectId').value.trim(),
+      appId: document.getElementById('appId').value.trim(),
+      roomId: document.getElementById('roomId').value.trim()
+    };
+
+    log(`Emitting 'join_room': ${JSON.stringify(payload)}`);
+    socket.emit('join_room', payload, (res) => {
+      log(`Ack Response [join_room]: ${JSON.stringify(res)}`, 'success');
+    });
+  }
+
+  function leaveRoom() {
+    if (!socket || !socket.connected) return log('Socket not connected', 'error');
+
+    const payload = {
+      projectId: document.getElementById('projectId').value.trim(),
+      appId: document.getElementById('appId').value.trim(),
+      roomId: document.getElementById('roomId').value.trim()
+    };
+
+    log(`Emitting 'leave_room': ${JSON.stringify(payload)}`);
+    socket.emit('leave_room', payload, (res) => {
+      log(`Ack Response [leave_room]: ${JSON.stringify(res)}`, 'success');
+    });
+  }
+
+  // --- 🚀 TRIGGER HTTP EMIT ---
+  async function triggerBackendEmit() {
+    const payload = {
+      projectId: document.getElementById('projectId').value.trim(),
+      appId: document.getElementById('appId').value.trim(),
+      roomId: document.getElementById('roomId').value.trim(),
+      event: document.getElementById('emitEvent').value.trim(),
+      payload: {
+        message: document.getElementById('emitMessage').value.trim(),
+        sender: 'Test Harness HTTP Trigger'
+      }
+    };
+
+    try {
+      log(`Posting HTTP request to trigger backend emit...`);
+      const response = await fetch('http://localhost:4000/notifications/test-emit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json();
+      log(`HTTP Response: ${JSON.stringify(data)}`);
+    } catch (err) {
+      log(`HTTP Push Request Failed: ${err.message}`, 'error');
+    }
+  }
+
+  function clearLogs() {
+    document.getElementById('logs').innerHTML = '';
+  }
+</script>
+</body>
+</html>
