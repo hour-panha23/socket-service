@@ -4,6 +4,7 @@ export class EmitToProjectDto {
   @Str() projectId!: string;
   @Str() event!: string;
   @Str() payload!: Record<string, unknown>;
+  @Str(true) senderSocketId?: string;
 }
 
 export class EmitToAppDto {
@@ -11,6 +12,7 @@ export class EmitToAppDto {
   @Str() appId!: string;
   @Str() event!: string;
   @Str() payload!: Record<string, unknown>;
+  @Str(true) senderSocketId?: string;
 }
 
 export class EmitToRoomDto {
@@ -19,4 +21,5 @@ export class EmitToRoomDto {
   @Str() roomId!: string;
   @Str() event!: string;
   @Str() payload!: Record<string, unknown>;
+  @Str(true) senderSocketId?: string;
 }
