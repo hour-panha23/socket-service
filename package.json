@@ -9,9 +9,18 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "@tanstack/react-query": "^5.101.3",
+    "ed25519": "link:@noble/curves/ed25519",
+    "install": "^0.13.0",
+    "lucide-react": "^1.25.0",
     "next": "16.2.11",
+    "npm": "^12.0.1",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
