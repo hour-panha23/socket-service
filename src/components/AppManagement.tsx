@@ -6,24 +6,32 @@ import React, { useState } from "react";
 import { logger } from "../lib/logger";
 import { ActionMenu } from "./ActionMenu";
 
-interface AppItem {
-  id: string;
-  name: string;
-  description?: string;
-  app_id: string;
-  public_key?: string;
-  is_active: boolean;
-  created_at: string;
+interface ApiResponse<T> {
+  success: boolean;
+  statusCode: number;
+  message: string;
+  data: T;
 }
 
-// Fetch Helper
+interface AppItem {
+  id: string;
+  app_id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  secret_key?: string;
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, options);
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`[${res.status}] ${text.slice(0, 100)}`);
   }
-  return res.json();
+  const json: ApiResponse<T> = await res.json();
+  return json.data;
 }
 
 export const AppManagement: React.FC = () => {
@@ -34,9 +42,11 @@ export const AppManagement: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAppName, setNewAppName] = useState("");
   const [newAppDesc, setNewAppDesc] = useState("");
+  const [pendingRegenerateApp, setPendingRegenerateApp] =
+    useState<AppItem | null>(null);
   const [secretModalData, setSecretModalData] = useState<{
     appId: string;
-    privateKey: string;
+    secretKey: string;
   } | null>(null);
 
   // 1. Query for apps list
@@ -47,13 +57,13 @@ export const AppManagement: React.FC = () => {
     error,
   } = useQuery<AppItem[]>({
     queryKey: ["apps"],
-    queryFn: () => fetchJson<AppItem[]>("/apps"),
+    queryFn: () => fetchJson<AppItem[]>("/apps/list"),
   });
 
   // 2. Mutations
   const createMutation = useMutation({
     mutationFn: (newApp: { name: string; description?: string }) =>
-      fetchJson<{ app: AppItem; privateKey: string }>("/apps", {
+      fetchJson<AppItem>("/apps/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newApp),
@@ -63,10 +73,12 @@ export const AppManagement: React.FC = () => {
       setIsCreateOpen(false);
       setNewAppName("");
       setNewAppDesc("");
-      setSecretModalData({
-        appId: data.app.app_id,
-        privateKey: data.privateKey,
-      });
+      if (data.secret_key) {
+        setSecretModalData({
+          appId: data.app_id,
+          secretKey: data.secret_key,
+        });
+      }
     },
     onError: (err) => {
       logger.error(err);
@@ -76,7 +88,7 @@ export const AppManagement: React.FC = () => {
 
   const toggleActiveMutation = useMutation({
     mutationFn: ({ id, active }: { id: string; active: boolean }) =>
-      fetchJson(`/apps/${id}/${active ? "enable" : "disable"}`, {
+      fetchJson<AppItem>(`/apps/${id}/${active ? "enable" : "disable"}`, {
         method: "PATCH",
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["apps"] }),
@@ -88,16 +100,16 @@ export const AppManagement: React.FC = () => {
 
   const regenerateSecretMutation = useMutation({
     mutationFn: (id: string) =>
-      fetchJson<{ app: AppItem; privateKey: string }>(
-        `/apps/${id}/regenerate-secret`,
-        { method: "POST" },
-      ),
+      fetchJson<AppItem>(`/apps/${id}/regenerate-secret`, { method: "POST" }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
-      setSecretModalData({
-        appId: data.app.app_id,
-        privateKey: data.privateKey,
-      });
+      setPendingRegenerateApp(null);
+      if (data.secret_key) {
+        setSecretModalData({
+          appId: data.app_id,
+          secretKey: data.secret_key,
+        });
+      }
     },
     onError: (err) => {
       logger.error(err);
@@ -106,7 +118,8 @@ export const AppManagement: React.FC = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => fetchJson(`/apps/${id}`, { method: "DELETE" }),
+    mutationFn: (id: string) =>
+      fetchJson<void>(`/apps/${id}`, { method: "DELETE" }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["apps"] }),
     onError: (err) => {
       logger.error(err);
@@ -166,7 +179,7 @@ export const AppManagement: React.FC = () => {
             {isLoading ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={5}
                   className="p-8 text-slate-500 text-center italic"
                 >
                   Loading registered apps...
@@ -174,14 +187,14 @@ export const AppManagement: React.FC = () => {
               </tr>
             ) : isError ? (
               <tr>
-                <td colSpan={6} className="p-8 text-rose-400 text-center">
+                <td colSpan={5} className="p-8 text-rose-400 text-center">
                   Error loading apps: {(error as Error).message}
                 </td>
               </tr>
             ) : apps.length === 0 ? (
               <tr>
                 <td
-                  colSpan={6}
+                  colSpan={5}
                   className="p-8 text-slate-500 text-center italic"
                 >
                   No apps registered yet.
@@ -231,9 +244,7 @@ export const AppManagement: React.FC = () => {
                         onToggleActive={(id, active) =>
                           toggleActiveMutation.mutate({ id, active })
                         }
-                        onRegenerateSecret={(id) =>
-                          regenerateSecretMutation.mutate(id)
-                        }
+                        onRegenerateSecret={() => setPendingRegenerateApp(app)}
                         onDelete={(id) => deleteMutation.mutate(id)}
                       />
                     </td>
@@ -302,6 +313,46 @@ export const AppManagement: React.FC = () => {
         </div>
       )}
 
+      {/* Confirmation Modal for Regenerate Secret */}
+      {pendingRegenerateApp && (
+        <div className="z-50 fixed inset-0 flex justify-center items-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="space-y-4 bg-slate-900 shadow-2xl p-6 border border-rose-500/30 rounded-xl w-full max-w-md">
+            <div className="flex items-center gap-2 text-rose-400">
+              <AlertTriangle className="w-5 h-5 shrink-0" />
+              <h3 className="font-bold text-sm">Regenerate Secret Key</h3>
+            </div>
+            <p className="text-slate-300 text-xs leading-relaxed">
+              This invalidates the current secret key immediately for{" "}
+              <span className="font-semibold text-white">
+                {pendingRegenerateApp.name}
+              </span>
+              . Continue?
+            </p>
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                disabled={regenerateSecretMutation.isPending}
+                onClick={() =>
+                  regenerateSecretMutation.mutate(pendingRegenerateApp.id)
+                }
+                className="flex-1 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 py-2 rounded-lg font-semibold text-white text-xs transition"
+              >
+                {regenerateSecretMutation.isPending
+                  ? "Regenerating..."
+                  : "Regenerate Key"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingRegenerateApp(null)}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 py-2 rounded-lg font-semibold text-slate-300 text-xs transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Secret Modal */}
       {secretModalData && (
         <div className="z-50 fixed inset-0 flex justify-center items-center bg-slate-950/80 backdrop-blur-sm p-4">
@@ -343,12 +394,12 @@ export const AppManagement: React.FC = () => {
                     Secret Key
                   </p>
                   <p className="mt-0.5 font-mono text-emerald-400 text-xs break-all select-all">
-                    {secretModalData.privateKey}
+                    {secretModalData.secretKey}
                   </p>
                 </div>
                 <button
                   onClick={() =>
-                    handleCopy(secretModalData.privateKey, "modal-secret")
+                    handleCopy(secretModalData.secretKey, "modal-secret")
                   }
                   className="bg-slate-800 hover:bg-slate-700 ml-2 px-2 py-1 border border-slate-700 rounded font-mono text-[10px] text-slate-300 transition shrink-0"
                 >

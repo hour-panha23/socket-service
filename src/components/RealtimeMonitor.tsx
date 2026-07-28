@@ -11,7 +11,6 @@ interface RealtimeMonitorProps {
   adminSubscribed: boolean;
   connectSocket: (authData: {
     appId: string;
-    // Ed25519 PEM private key when mode is "app", raw HMAC secret when "admin"
     secret: string;
     mode: "app" | "admin";
   }) => void;
@@ -41,21 +40,19 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   emitLogs,
   connectedClientCount,
 }) => {
-  // Auth Inputs
+  // Auth Inputs (Updated: App Secret instead of Ed25519 Private Key)
   const [authMode, setAuthMode] = useState<"app" | "admin">("app");
-  const [appIdInput, setAppIdInput] = useState("app_9e82c6c022c4a795");
-  const [privateKeyInput, setPrivateKeyInput] = useState(
-    "-----BEGIN PRIVATE KEY-----MC4CAQAwBQYDK2VwBCIEIMXdmGwYqdwgaj4+gujvk2YbalMROzzvyYVCQtLD1Uin-----END PRIVATE KEY-----",
-  );
+  const [appIdInput, setAppIdInput] = useState("app_46958be0cbd7a17c");
+  const [appSecretInput, setAppSecretInput] = useState("123");
   const [adminSecretInput, setAdminSecretInput] = useState("");
 
-  // Room Inputs
+  // Channel/Room Management Inputs
   const [projectId, setProjectId] = useState("proj_siksara");
   const [appIdRoom, setAppIdRoom] = useState("learning_hub");
-  const [roomId, setRoomId] = useState("course_101");
-  const [joinedRooms, setJoinedRooms] = useState<string[]>([]);
+  const [channelId, setChannelId] = useState("course_101");
+  const [joinedChannels, setJoinedChannels] = useState<string[]>([]);
 
-  // REST Dispatch Inputs
+  // S2S REST Dispatch Inputs
   const [emitScope, setEmitScope] = useState<"project" | "app" | "room">(
     "room",
   );
@@ -70,53 +67,51 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     if (!socket) return;
 
     const onRoomJoined = (res: any) => {
-      // Handle both { data: { projectId, appId, roomId } } and direct { projectId, appId, roomId }
       const roomData = res?.data || res;
-
       logger.info(roomData);
 
-      if (roomData?.projectId && roomData?.appId && roomData?.roomId) {
-        const roomStr = `${roomData.projectId} / ${roomData.appId} / ${roomData.roomId}`;
-        setJoinedRooms((prev) => [...new Set([...prev, roomStr])]);
+      if (roomData?.channelId || roomData?.roomId) {
+        const target = roomData.channelId || roomData.roomId;
+        const roomStr = `${roomData.projectId || "default"} / ${roomData.appId || "app"} / ${target}`;
+        setJoinedChannels((prev) => [...new Set([...prev, roomStr])]);
       }
     };
 
     const onRoomLeft = (res: any) => {
       const roomData = res?.data || res;
-      if (roomData?.roomId) {
-        setJoinedRooms((prev) =>
-          prev.filter((r) => !r.endsWith(`/ ${roomData.roomId}`)),
+      const target = roomData?.channelId || roomData?.roomId;
+      if (target) {
+        setJoinedChannels((prev) =>
+          prev.filter((r) => !r.endsWith(`/ ${target}`)),
         );
       }
     };
 
+    socket.on("channel:joined", onRoomJoined);
     socket.on("room_joined", onRoomJoined);
+    socket.on("channel:left", onRoomLeft);
     socket.on("room_left", onRoomLeft);
 
     return () => {
+      socket.off("channel:joined", onRoomJoined);
       socket.off("room_joined", onRoomJoined);
+      socket.off("channel:left", onRoomLeft);
       socket.off("room_left", onRoomLeft);
     };
   }, [socket]);
 
   const handleConnect = () => {
-    if (!appIdInput.trim()) {
-      return alert("Enter an App ID");
-    }
+    if (!appIdInput.trim()) return alert("Enter an App ID");
 
     if (authMode === "app") {
-      if (!privateKeyInput.trim()) {
-        return alert("Enter the app's Private Key");
-      }
+      if (!appSecretInput.trim()) return alert("Enter the App HMAC Secret");
       connectSocket({
         appId: appIdInput.trim(),
-        secret: privateKeyInput.trim(),
+        secret: appSecretInput.trim(),
         mode: "app",
       });
     } else {
-      if (!adminSecretInput.trim()) {
-        return alert("Enter the Admin Secret Key");
-      }
+      if (!adminSecretInput.trim()) return alert("Enter the Admin Secret Key");
       connectSocket({
         appId: appIdInput.trim(),
         secret: adminSecretInput.trim(),
@@ -125,21 +120,21 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     }
   };
 
-  const handleJoinRoom = () => {
+  const handleJoinChannel = () => {
     if (!socket || !isConnected) return alert("Connect socket first!");
-    socket.emit("join_room", {
+    socket.emit("channel:join", {
       projectId: projectId.trim(),
       appId: appIdRoom.trim(),
-      roomId: roomId.trim(),
-    }); // no callback — response arrives via the 'room_joined' listener above
+      channelId: channelId.trim(),
+    });
   };
 
-  const handleLeaveRoom = () => {
+  const handleLeaveChannel = () => {
     if (!socket || !isConnected) return alert("Connect socket first!");
-    socket.emit("leave_room", {
+    socket.emit("channel:leave", {
       projectId: projectId.trim(),
       appId: appIdRoom.trim(),
-      roomId: roomId.trim(),
+      channelId: channelId.trim(),
     });
   };
 
@@ -164,7 +159,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       room: {
         projectId: emitProjectId,
         appId: emitAppId,
-        roomId: emitRoomId,
+        targetChannel: emitRoomId,
         event: emitEventName,
         payload,
         senderSocketId,
@@ -172,15 +167,21 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     };
 
     try {
-      const res = await fetch(`/notifications/emit/${emitScope}`, {
+      // const activeSecret =
+      //   authMode === "app" ? appSecretInput : adminSecretInput;
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+
+      const res = await fetch(`/api/v1/s2s/broadcast`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-app-id": appIdInput,
+          "x-timestamp": timestamp,
+        },
         body: JSON.stringify(bodyMap[emitScope]),
       });
       const data = await res.json();
-      setEmitResult(
-        `✓ Dispatched → ${data.recipientCount} client(s) in "${data.target}" received "${data.event}"`,
-      );
+      setEmitResult(`✓ Dispatched → ${data.status || "Success"}`);
     } catch (e: any) {
       logger.error(e);
       setEmitResult("✗ Failed to send payload");
@@ -189,16 +190,16 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* View Header */}
+      {/* Header */}
       <div className="flex justify-between items-center pb-4 border-slate-800/60 border-b">
         <div>
           <h2 className="font-bold text-white text-xl tracking-tight">
             Realtime Gateway Monitor
           </h2>
           <p className="mt-0.5 text-slate-400 text-xs">
-            Namespace active:{" "}
+            Adapter Mode:{" "}
             <code className="bg-indigo-500/10 px-1.5 py-0.5 rounded font-mono text-[11px] text-indigo-300">
-              /notifications
+              Redis Multi-Node Gateway
             </code>
           </p>
         </div>
@@ -218,18 +219,15 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
         </span>
       </div>
 
-      {/* Main 2-Column Dashboard Layout */}
       <div className="items-start gap-6 grid grid-cols-1 xl:grid-cols-3">
-        {/* Left Column: Controls and Feeds */}
         <div className="space-y-6 xl:col-span-2">
-          {/* Section 1: Auth, Room Manager, Active Rooms */}
           <div className="gap-6 grid grid-cols-1 lg:grid-cols-2">
-            {/* Card 1: Auth */}
+            {/* Card 1: HMAC Auth */}
             <div className="flex flex-col justify-between space-y-4 bg-slate-900/60 p-5 border border-slate-800 rounded-xl">
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
-                    1. Client Authentication
+                    1. HMAC-SHA256 Client Auth
                   </h3>
                   <div className="flex bg-slate-950 p-0.5 border border-slate-800 rounded-lg">
                     <button
@@ -265,23 +263,23 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                       placeholder="app_xxxxxxxx"
                       value={appIdInput}
                       onChange={(e) => setAppIdInput(e.target.value)}
-                      className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs placeholder-slate-600"
+                      className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                     />
                   </div>
                   {authMode === "app" ? (
                     <div>
                       <label className="block mb-1 font-medium text-[11px] text-slate-300">
-                        Private Key
+                        App Shared Secret (HMAC-SHA256)
                       </label>
-                      <textarea
-                        rows={4}
-                        placeholder="-----BEGIN PRIVATE KEY-----..."
-                        value={privateKeyInput}
-                        onChange={(e) => setPrivateKeyInput(e.target.value)}
-                        className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-mono text-[10px] text-slate-200"
+                      <input
+                        type="password"
+                        placeholder="App Secret String"
+                        value={appSecretInput}
+                        onChange={(e) => setAppSecretInput(e.target.value)}
+                        className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                       />
                       <p className="mt-1 text-[10px] text-slate-500">
-                        Ed25519-signed locally — never sent as-is over the wire.
+                        HMAC-SHA256 signature generated locally with timestamp.
                       </p>
                     </div>
                   ) : (
@@ -294,13 +292,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                         placeholder="ADMIN_SECRET_KEY"
                         value={adminSecretInput}
                         onChange={(e) => setAdminSecretInput(e.target.value)}
-                        className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 w-full font-mono text-slate-200 text-xs placeholder-slate-600"
+                        className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 w-full font-mono text-slate-200 text-xs"
                       />
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        {`HMAC-SHA256 signed locally — matches the server's`}{" "}
-                        <code className="text-amber-400">ADMIN_SECRET_KEY</code>{" "}
-                        env var.
-                      </p>
                     </div>
                   )}
                 </div>
@@ -335,16 +328,13 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               </div>
             </div>
 
-            {/* Card 2: Room Manager */}
+            {/* Card 2: Channel Manager */}
             <div className="flex flex-col justify-between space-y-4 bg-slate-900/60 p-5 border border-slate-800 rounded-xl">
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
-                    2. Room Manager
+                    2. Channel & Presence Manager
                   </h3>
-                  <span className="font-mono text-[10px] text-slate-500">
-                    Hierarchical Room
-                  </span>
                 </div>
                 <div className="space-y-2.5">
                   <div>
@@ -371,12 +361,12 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   </div>
                   <div>
                     <label className="block mb-0.5 text-[10px] text-slate-400">
-                      Target Channel/Room ID
+                      Target Channel ID
                     </label>
                     <input
                       type="text"
-                      value={roomId}
-                      onChange={(e) => setRoomId(e.target.value)}
+                      value={channelId}
+                      onChange={(e) => setChannelId(e.target.value)}
                       className="bg-slate-950 px-2.5 py-1.5 border border-slate-800 focus:border-indigo-500 rounded-md focus:outline-none w-full font-mono text-slate-200 text-xs"
                     />
                   </div>
@@ -385,45 +375,42 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
               <div className="gap-2 grid grid-cols-2 pt-2">
                 <button
-                  onClick={handleJoinRoom}
+                  onClick={handleJoinChannel}
                   disabled={!isConnected}
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow-sm px-3 py-2 rounded-lg font-semibold text-white text-xs transition"
                 >
-                  Join Room
+                  Join Channel
                 </button>
                 <button
-                  onClick={handleLeaveRoom}
+                  onClick={handleLeaveChannel}
                   disabled={!isConnected}
                   className="bg-rose-600/20 hover:bg-rose-600/30 disabled:opacity-50 px-3 py-2 border border-rose-500/30 rounded-lg font-semibold text-rose-400 text-xs transition"
                 >
-                  Leave Room
+                  Leave Channel
                 </button>
               </div>
             </div>
 
-            {/* Card 3: Active Subscriptions */}
+            {/* Active Subscriptions */}
             <div className="flex flex-col justify-between lg:col-span-2 bg-slate-900/60 p-5 border border-slate-800 rounded-xl">
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
-                    Subscribed Rooms
+                    Subscribed Channels
                   </h3>
-                  <span className="bg-slate-800 px-2 py-0.5 rounded font-mono text-[10px] text-slate-400">
-                    Active
-                  </span>
                 </div>
                 <ul className="space-y-2 pr-1 max-h-48 overflow-y-auto">
-                  {joinedRooms.length === 0 ? (
+                  {joinedChannels.length === 0 ? (
                     <li className="bg-slate-950/40 p-3 border border-slate-800 border-dashed rounded-lg text-slate-500 text-xs text-center italic">
-                      No active room subscriptions
+                      No active channel subscriptions
                     </li>
                   ) : (
-                    joinedRooms.map((room, idx) => (
+                    joinedChannels.map((ch, idx) => (
                       <li
                         key={idx}
                         className="flex justify-between items-center bg-slate-950 p-2.5 border border-slate-800 rounded-lg font-mono text-slate-300 text-xs"
                       >
-                        {room}
+                        {ch}
                       </li>
                     ))
                   )}
@@ -432,14 +419,14 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
             </div>
           </div>
 
-          {/* Section 2: REST Dispatcher */}
+          {/* S2S Dispatcher */}
           <div className="space-y-4 bg-slate-900/60 p-5 border border-slate-800 rounded-xl">
             <div className="flex justify-between items-center">
               <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
-                3. Rest Broadcaster Dispatch
+                3. Server-to-Server (S2S) HMAC Broadcaster
               </h3>
               <span className="font-mono text-[10px] text-indigo-400">
-                POST /notifications/emit/:scope
+                POST /api/v1/s2s/broadcast
               </span>
             </div>
 
@@ -455,7 +442,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                 >
                   <option value="project">Project Scope</option>
                   <option value="app">App Scope</option>
-                  <option value="room">Room Scope</option>
+                  <option value="room">Channel Scope</option>
                 </select>
               </div>
               <div>
@@ -485,7 +472,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               {emitScope === "room" && (
                 <div>
                   <label className="block mb-1 text-[10px] text-slate-400">
-                    Room ID
+                    Channel ID
                   </label>
                   <input
                     type="text"
@@ -511,7 +498,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   onClick={handleTriggerEmit}
                   className="bg-indigo-600 hover:bg-indigo-500 shadow-sm py-2 rounded-lg w-full font-semibold text-white text-xs transition"
                 >
-                  Dispatch Payload
+                  Dispatch S2S
                 </button>
               </div>
             </div>
@@ -534,9 +521,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
             )}
           </div>
 
-          {/* Section 3: Telemetry & Lifetime Feeds */}
+          {/* Feeds */}
           <div className="gap-6 grid grid-cols-1 lg:grid-cols-2">
-            {/* Live Telemetry Feed */}
             <div className="flex flex-col bg-slate-900/60 p-4 border border-slate-800 rounded-xl h-80">
               <div className="flex justify-between items-center mb-3 pb-2 border-slate-800/80 border-b">
                 <div className="flex items-center gap-2">
@@ -552,25 +538,18 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               <div className="flex-1 space-y-2 pr-1 overflow-y-auto">
                 {emitLogs.length === 0 ? (
                   <p className="p-4 text-slate-500 text-xs text-center italic">
-                    Subscribe to admin feed to capture broadcast events...
+                    Subscribe to admin feed...
                   </p>
                 ) : (
                   emitLogs.map((entry, i) => (
                     <div
                       key={i}
-                      className="space-y-1 bg-slate-950 shadow-sm p-3 border border-slate-800 rounded-lg text-xs"
+                      className="space-y-1 bg-slate-950 p-3 border border-slate-800 rounded-lg text-xs"
                     >
                       <div className="flex justify-between items-center">
-                        <div className="flex flex-col">
-                          <span className="font-mono font-semibold text-indigo-300">
-                            {entry.event}
-                          </span>
-                          {entry.rawEvent && entry.rawEvent !== entry.event && (
-                            <span className="font-mono text-[10px] text-slate-500">
-                              raw: {entry.rawEvent}
-                            </span>
-                          )}
-                        </div>
+                        <span className="font-mono font-semibold text-indigo-300">
+                          {entry.event}
+                        </span>
                         <span className="bg-emerald-500/10 px-1.5 py-0.5 border border-emerald-500/20 rounded font-mono text-[11px] text-emerald-400">
                           {entry.recipientCount} client(s)
                         </span>
@@ -584,7 +563,6 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               </div>
             </div>
 
-            {/* Client Lifetime Monitor */}
             <div className="flex flex-col bg-slate-900/60 p-4 border border-slate-800 rounded-xl h-80">
               <div className="flex justify-between items-center mb-3 pb-2 border-slate-800/80 border-b">
                 <div className="flex items-center gap-2">
@@ -600,36 +578,27 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               <div className="flex-1 space-y-1.5 pr-1 overflow-y-auto font-mono text-xs">
                 {clientEvents.length === 0 ? (
                   <p className="p-4 font-sans text-slate-500 text-xs text-center italic">
-                    Subscribe to admin feed to view connect/disconnect
-                    actions...
+                    Subscribe to admin feed...
                   </p>
                 ) : (
-                  clientEvents.map((evt, i) => {
-                    const isConnect = evt.type === "connect";
-                    return (
-                      <div
-                        key={i}
-                        className={`p-2 rounded border text-[11px] flex justify-between ${
-                          isConnect
-                            ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
-                            : "text-rose-400 bg-rose-500/10 border-rose-500/20"
-                        }`}
-                      >
-                        <span>
-                          [{new Date(evt.timestamp).toLocaleTimeString()}]{" "}
-                          <strong>{evt.type.toUpperCase()}</strong>{" "}
-                          {evt.clientId}
-                        </span>
-                      </div>
-                    );
-                  })
+                  clientEvents.map((evt, i) => (
+                    <div
+                      key={i}
+                      className={`p-2 rounded border text-[11px] flex justify-between ${evt.type === "connect" ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/20" : "text-rose-400 bg-rose-500/10 border-rose-500/20"}`}
+                    >
+                      <span>
+                        [{new Date(evt.timestamp).toLocaleTimeString()}]{" "}
+                        <strong>{evt.type.toUpperCase()}</strong> {evt.clientId}
+                      </span>
+                    </div>
+                  ))
                 )}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Pinned Client Log Terminal */}
+        {/* Terminal */}
         <div className="top-6 sticky xl:col-span-1">
           <div className="flex flex-col bg-slate-950 shadow-2xl p-4 border border-slate-800 rounded-xl h-[calc(100vh-8rem)]">
             <div className="flex justify-between items-center mb-3 pb-2 border-slate-800/80 border-b">
@@ -649,21 +618,13 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
             <div className="flex-1 space-y-1.5 pr-1 overflow-y-auto font-mono text-xs">
               {logs.length === 0 ? (
                 <p className="p-4 text-slate-600 text-xs text-center italic">
-                  Terminal ready. Logs will stream here...
+                  Terminal ready...
                 </p>
               ) : (
                 logs.map((log, i) => (
                   <p
                     key={i}
-                    className={`leading-relaxed break-all ${
-                      log.type === "error"
-                        ? "text-rose-400"
-                        : log.type === "warn"
-                          ? "text-amber-400"
-                          : log.type === "emit"
-                            ? "text-cyan-400 font-semibold"
-                            : "text-emerald-400"
-                    }`}
+                    className={`leading-relaxed break-all ${log.type === "error" ? "text-rose-400" : log.type === "warn" ? "text-amber-400" : log.type === "emit" ? "text-cyan-400 font-semibold" : "text-emerald-400"}`}
                   >
                     [{log.time}] {log.msg}
                   </p>
