@@ -1,4 +1,4 @@
-import { KNEX_CONNECTION } from '@/decorator/database.decorator';
+import { KNEX_CONNECTION } from '@/common/decorator/database.decorator';
 import { Global, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import knex, { Knex } from 'knex';

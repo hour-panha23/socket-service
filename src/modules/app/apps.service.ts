@@ -1,10 +1,11 @@
 import {
   buildSignedMessage,
   isTimestampFresh,
-  verifyEd25519Signature,
+  verifyHmacSignature,
 } from '@/common/crypto/signature.util';
+import { logger } from '@/common/logger/logger.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { generateKeyPairSync } from 'crypto';
+import { randomBytes } from 'crypto';
 import { CreateAppDto, UpdateAppDto } from './apps.dto';
 import { AppsRepository } from './apps.repo';
 import { AppRecord, PublicAppRecord } from './apps.types';
@@ -18,22 +19,14 @@ export class AppsService {
   }
 
   private generateAppId(): string {
-    return `app_${require('crypto').randomBytes(8).toString('hex')}`;
+    return `app_${randomBytes(8).toString('hex')}`;
   }
 
-  private generateKeyPair() {
-    return generateKeyPairSync('ed25519', {
-      publicKeyEncoding: { type: 'spki', format: 'pem' },
-      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
-    });
+  private generateSecret(): string {
+    return randomBytes(32).toString('hex');
   }
-
-  // NOTE: privateKey is returned exactly once — the caller (app owner) must store
-  // it themselves. The server never persists it, only the public key.
-  async create(
-    dto: CreateAppDto,
-  ): Promise<{ app: PublicAppRecord; privateKey: string }> {
-    const { publicKey, privateKey } = this.generateKeyPair();
+  async create(dto: CreateAppDto) {
+    const secret = this.generateSecret();
 
     let app: AppRecord | undefined;
     let attempts = 0;
@@ -43,7 +36,7 @@ export class AppsService {
       try {
         app = await this.appsRepository.create({
           app_id: this.generateAppId(),
-          public_key: publicKey,
+          secret_key: secret,
           name: dto.name,
           description: dto.description ?? null,
           is_active: true,
@@ -58,59 +51,114 @@ export class AppsService {
       throw new Error('Failed to generate a unique app_id after 3 attempts');
     }
 
-    return { app: this.toPublic(app), privateKey };
+    return this.toPublic(app);
   }
 
-  async findAll(): Promise<PublicAppRecord[]> {
+  async findAll() {
     const apps = await this.appsRepository.findAll();
     return apps.map((a) => this.toPublic(a));
   }
 
-  async findOne(id: string): Promise<PublicAppRecord> {
+  async findOne(id: string) {
     const app = await this.appsRepository.findById(id);
     if (!app) throw new NotFoundException('App not found');
     return this.toPublic(app);
   }
 
-  async update(id: string, dto: UpdateAppDto): Promise<PublicAppRecord> {
+  async update(id: string, dto: UpdateAppDto) {
     const app = await this.appsRepository.update(id, dto);
     if (!app) throw new NotFoundException('App not found');
     return this.toPublic(app);
   }
 
-  async setActive(id: string, isActive: boolean): Promise<PublicAppRecord> {
+  async setActive(id: string, isActive: boolean) {
     const app = await this.appsRepository.update(id, { is_active: isActive });
     if (!app) throw new NotFoundException('App not found');
     return this.toPublic(app);
   }
 
-  async remove(id: string): Promise<void> {
+  async remove(id: string) {
     const deleted = await this.appsRepository.delete(id);
     if (!deleted) throw new NotFoundException('App not found');
   }
 
-  async regenerateKeys(
-    id: string,
-  ): Promise<{ app: PublicAppRecord; privateKey: string }> {
-    const { publicKey, privateKey } = this.generateKeyPair();
-    const app = await this.appsRepository.update(id, { public_key: publicKey });
+  async regenerateSecret(id: string) {
+    const secret = this.generateSecret();
+    const app = await this.appsRepository.update(id, { secret_key: secret });
     if (!app) throw new NotFoundException('App not found');
-    return { app: this.toPublic(app), privateKey };
+    return this.toPublic(app);
   }
 
-  // Replaces verifyCredentials — no secret ever touches the server.
   async verifySignature(
     appId: string,
     timestamp: string,
-    signature: string,
-  ): Promise<PublicAppRecord | null> {
-    if (!isTimestampFresh(timestamp)) return null;
+    signatureHex: string,
+  ) {
+    logger.debug(`[VerifySignature Start] Validating signature`, {
+      appId,
+      timestamp,
+      signatureHex: signatureHex ? `${signatureHex.slice(0, 8)}...` : undefined,
+    });
 
+    // Step 1: Check Timestamp Freshness
+    if (!isTimestampFresh(timestamp)) {
+      logger.error(`[VerifySignature Failed] Stale timestamp received`, {
+        appId,
+        timestamp,
+        currentTime: Date.now(),
+      });
+      return null;
+    }
+
+    // Step 2: Database Lookup
+    const dbStartTime = Date.now();
     const app = await this.appsRepository.findByAppId(appId);
-    if (!app || !app.is_active) return null;
+    const dbDuration = Date.now() - dbStartTime;
 
+    logger.debug('Founded App', app);
+
+    if (!app) {
+      logger.error(`[VerifySignature Failed] App not found in database`, {
+        appId,
+        dbDurationMs: dbDuration,
+      });
+      return null;
+    }
+
+    if (!app.is_active) {
+      logger.error(`[VerifySignature Failed] App is deactivated`, {
+        appId,
+        appName: app.name,
+        isActive: app.is_active,
+      });
+      return null;
+    }
+
+    logger.debug(`[VerifySignature] App found in DB`, {
+      appId: app.app_id,
+      appName: app.name,
+      dbDurationMs: dbDuration,
+      hasSecretKey: !!app.secret_key,
+    });
+
+    // Step 3: Signature Verification
     const message = buildSignedMessage(appId, timestamp);
-    const isValid = verifyEd25519Signature(message, signature, app.public_key);
-    return isValid ? this.toPublic(app) : null;
+    const isValid = verifyHmacSignature(message, signatureHex, app.secret_key);
+
+    if (!isValid) {
+      logger.error(`[VerifySignature Failed] HMAC signature mismatch`, {
+        appId,
+        signedMessage: message,
+        receivedSignature: signatureHex,
+      });
+      return null;
+    }
+
+    logger.debug(`[VerifySignature Success] App authenticated successfully`, {
+      appId: app.app_id,
+      appName: app.name,
+    });
+
+    return this.toPublic(app);
   }
 }

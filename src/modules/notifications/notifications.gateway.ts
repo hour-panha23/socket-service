@@ -11,7 +11,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { DefaultEventsMap, Server, Socket } from 'socket.io';
-import { LoggerService } from '../../logger/logger.service';
+import { LoggerService } from '../../common/logger/logger.service';
 import { AppsService } from '../app/apps.service';
 import { NotificationsService } from './notifications.service';
 
@@ -20,7 +20,7 @@ import {
   isTimestampFresh,
   verifyHmacSignature,
 } from '@/common/crypto/signature.util';
-import { WsAppAuthGuard } from './ws-jwt.guard';
+import { WsAppAuthGuard } from './ws-auth.guard';
 
 export interface AppData {
   appId: string;
@@ -79,30 +79,74 @@ export class NotificationsGateway
   }
 
   async handleConnection(client: TypedSocket) {
-    const { app_id, timestamp, signature } = (client.handshake.auth ??
-      {}) as Partial<AppHandshakeAuth>;
+    this.logger.debug(`[WS Connect] New incoming connection attempt`, {
+      clientId: client.id,
+      transport: client.conn.transport.name,
+    });
 
+    const auth = (client.handshake.auth ?? {}) as Record<string, any>;
+    const headers = (client.handshake.headers ?? {}) as Record<string, any>;
+    const query = (client.handshake.query ?? {}) as Record<string, any>;
+
+    // Fallback support for both app_id (snake_case) and appId (camelCase)
+    const app_id =
+      auth.app_id ||
+      auth.appId ||
+      headers['x-app-id'] ||
+      query.app_id ||
+      query.appId;
+    const timestamp =
+      auth.timestamp || headers['x-timestamp'] || query.timestamp;
+    const signature =
+      auth.signature || headers['x-signature'] || query.signature;
+
+    this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
+      clientId: client.id,
+      app_id,
+      timestamp,
+      signature: signature ? `${signature.slice(0, 8)}...` : undefined, // truncated for security
+      sources: {
+        authKeys: Object.keys(auth),
+        headerKeys: Object.keys(headers),
+        queryKeys: Object.keys(query),
+      },
+    });
+
+    // Step 1: Missing Credentials Check
     if (!app_id || !timestamp || !signature) {
-      this.logger.error(`Connection rejected: missing credentials`, {
+      this.logger.error(`[WS Auth Failed] Missing credentials`, {
         clientId: client.id,
+        hasAppId: !!app_id,
+        hasTimestamp: !!timestamp,
+        hasSignature: !!signature,
       });
       client.disconnect(true);
       return;
     }
 
-    if (!isTimestampFresh(timestamp)) {
-      this.logger.error(`Connection rejected: stale timestamp`, {
+    // Step 2: Timestamp Freshness Check
+    const isFresh = isTimestampFresh(timestamp);
+    if (!isFresh) {
+      this.logger.error(`[WS Auth Failed] Stale timestamp`, {
         clientId: client.id,
         app_id,
+        providedTimestamp: timestamp,
+        currentTime: Date.now(),
       });
       client.disconnect(true);
       return;
     }
 
+    // Step 3: Admin Auth Checks
     const adminAppId = this.configService.get<string>('ADMIN_APP_ID');
     const adminSecretKey = this.configService.get<string>('ADMIN_SECRET_KEY');
 
     if (adminAppId && adminSecretKey && app_id === adminAppId) {
+      this.logger.debug(`[WS Auth] Attempting admin authentication`, {
+        clientId: client.id,
+        adminAppId,
+      });
+
       const message = buildSignedMessage(app_id, timestamp);
       const isValidAdmin = verifyHmacSignature(
         message,
@@ -111,8 +155,10 @@ export class NotificationsGateway
       );
 
       if (!isValidAdmin) {
-        this.logger.error(`Admin auth rejected: bad signature`, {
+        this.logger.error(`[WS Auth Failed] Admin HMAC signature mismatch`, {
           clientId: client.id,
+          app_id,
+          signedMessage: message,
         });
         client.disconnect(true);
         return;
@@ -120,31 +166,75 @@ export class NotificationsGateway
 
       client.data.app = { appId: app_id, name: 'Admin Monitor', isAdmin: true };
       await client.join(`service:${app_id}`);
-      this.emitConnectEvent(client);
-      this.logger.debug(`Admin app connected: ${app_id}`, {
+
+      this.logger.debug(`[WS Auth Success] Admin app connected & joined room`, {
         clientId: client.id,
+        room: `service:${app_id}`,
       });
+
+      this.emitConnectEvent(client);
       return;
     }
 
-    const app = await this.appsService.verifySignature(
+    // Step 4: Standard App Auth Check
+    // Step 4: Standard App Auth Check
+    this.logger.debug(`[WS Auth] Verifying standard app signature`, {
+      clientId: client.id,
       app_id,
-      timestamp,
-      signature,
-    );
-    if (!app) {
-      this.logger.error(`App auth rejected for client ${client.id}`, {
-        app_id,
-      });
-      client.disconnect(true);
-      return;
-    }
+    });
 
-    client.data.app = { appId: app.app_id, name: app.name, isAdmin: false };
-    await client.join(`service:${app.app_id}`);
-    this.emitConnectEvent(client);
-    this.logger.debug(`App connected: ${app.app_id}`, { clientId: client.id });
+    const startTime = Date.now();
+
+    try {
+      const app = await this.appsService.verifySignature(
+        app_id,
+        timestamp,
+        signature,
+      );
+
+      const durationMs = Date.now() - startTime;
+      this.logger.debug(
+        `[WS Auth] DB signature check finished in ${durationMs}ms`,
+        {
+          clientId: client.id,
+          appFound: !!app,
+        },
+      );
+
+      if (!app) {
+        this.logger.error(
+          `[WS Auth Failed] App signature invalid or app not found in DB`,
+          { clientId: client.id, app_id, durationMs },
+        );
+        client.disconnect(true);
+        return;
+      }
+
+      client.data.app = { appId: app.app_id, name: app.name, isAdmin: false };
+      await client.join(`service:${app.app_id}`);
+
+      this.logger.debug(`[WS Auth Success] Standard app connected`, {
+        clientId: client.id,
+        app_id: app.app_id,
+        room: `service:${app.app_id}`,
+      });
+
+      this.emitConnectEvent(client);
+    } catch (error: any) {
+      const durationMs = Date.now() - startTime;
+      this.logger.error(
+        `[WS Auth Exception] Crash inside verifySignature after ${durationMs}ms`,
+        {
+          clientId: client.id,
+          app_id,
+          errorMessage: error?.message || String(error),
+          errorStack: error?.stack,
+        },
+      );
+      client.disconnect(true);
+    }
   }
+
   handleDisconnect(client: TypedSocket) {
     this.logger.debug(`Client disconnected: ${client.id}`);
     this.server.to('admin:monitor').emit('admin:client_event', {

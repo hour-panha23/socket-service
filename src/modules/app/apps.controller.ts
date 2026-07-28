@@ -1,3 +1,4 @@
+import { TransformInterceptor } from '@/common/interceptors/transform.interceptor';
 import {
   Body,
   Controller,
@@ -6,21 +7,23 @@ import {
   Param,
   Patch,
   Post,
+  UseInterceptors,
 } from '@nestjs/common';
 import { CreateAppDto, UpdateAppDto } from './apps.dto';
 import { AppsService } from './apps.service';
 
 // TODO: guard this whole controller with an admin-only auth guard before shipping
 @Controller('apps')
+@UseInterceptors(TransformInterceptor)
 export class AppsController {
   constructor(private readonly appsService: AppsService) {}
 
-  @Post()
+  @Post('create')
   create(@Body() dto: CreateAppDto) {
     return this.appsService.create(dto);
   }
 
-  @Get()
+  @Get('list')
   findAll() {
     return this.appsService.findAll();
   }
@@ -47,7 +50,7 @@ export class AppsController {
 
   @Post(':id/regenerate-secret')
   regenerateSecret(@Param('id') id: string) {
-    return this.appsService.regenerateKeys(id);
+    return this.appsService.regenerateSecret(id);
   }
 
   @Delete(':id')

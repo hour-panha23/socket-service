@@ -1,4 +1,4 @@
-import { InjectKnex } from '@/decorator/database.decorator';
+import { InjectKnex } from '@/common/decorator/database.decorator';
 import { Injectable } from '@nestjs/common';
 import { Knex } from 'knex';
 import { AppRecord } from './apps.types';
@@ -9,7 +9,7 @@ export class AppsRepository {
 
   async create(data: {
     app_id: string;
-    public_key: string;
+    secret_key: string;
     name: string;
     description: string | null;
     is_active: boolean;

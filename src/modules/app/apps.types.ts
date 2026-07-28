@@ -1,7 +1,7 @@
 export interface AppRecord {
   id: string;
   app_id: string;
-  public_key: string;
+  secret_key: string;
   name: string;
   description: string | null;
   is_active: boolean;

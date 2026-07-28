@@ -1,4 +1,4 @@
-import { Str } from '@/decorator/field.decorator';
+import { Str } from '@/common/decorator/field.decorator';
 
 export class EmitToProjectDto {
   @Str() projectId!: string;

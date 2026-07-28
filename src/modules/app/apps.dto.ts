@@ -1,9 +1,11 @@
+import { Str } from '@/common/decorator/field.decorator';
+
 export class CreateAppDto {
-  name!: string;
-  description?: string;
+  @Str() name!: string;
+  @Str(true) description?: string;
 }
 
 export class UpdateAppDto {
-  name?: string;
-  description?: string;
+  @Str() name?: string;
+  @Str() description?: string;
 }

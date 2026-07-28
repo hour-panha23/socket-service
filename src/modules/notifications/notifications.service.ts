@@ -1,4 +1,4 @@
-import { logger } from '@/logger/logger.service';
+import { logger } from '@/common/logger/logger.service';
 import { Injectable } from '@nestjs/common';
 import { Server } from 'socket.io';
 
