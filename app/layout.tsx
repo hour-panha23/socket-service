@@ -5,6 +5,7 @@ import { SocketProvider, useSocketContext } from "@/src/context/SocketContext";
 import QueryProvider from "@/src/providers/query-provider";
 import { Geist, Geist_Mono } from "next/font/google";
 import { usePathname, useRouter } from "next/navigation";
+import { ReactNode } from "react";
 
 import "./globals.css";
 
@@ -18,7 +19,7 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
+function DashboardLayoutContent({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isConnected } = useSocketContext();
@@ -34,15 +35,15 @@ function DashboardLayoutContent({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <div className="flex bg-slate-950 h-screen overflow-hidden font-sans text-slate-100 antialiased">
+    <div
+      className={`flex min-h-screen ${geistSans.variable} ${geistMono.variable} font-sans bg-slate-950 text-white`}
+    >
       <Sidebar
         activeTab={activeTab}
-        isConnected={isConnected}
         setActiveTab={handleTabChange}
+        isConnected={isConnected}
       />
-      <main className="flex-1 p-6 overflow-y-auto">
-        <div className="space-y-6">{children}</div>
-      </main>
+      <main className="flex-1 p-6 overflow-auto">{children}</main>
     </div>
   );
 }
@@ -53,12 +54,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-      suppressHydrationWarning
-    >
-      <body className="flex flex-col min-h-full" suppressHydrationWarning>
+    <html lang="en">
+      <body
+        className="bg-slate-950 text-white antialiased"
+        suppressHydrationWarning
+      >
         <QueryProvider>
           <SocketProvider>
             <DashboardLayoutContent>{children}</DashboardLayoutContent>

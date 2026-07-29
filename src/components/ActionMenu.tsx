@@ -1,5 +1,4 @@
 "use client";
-
 import { MoreVertical } from "lucide-react";
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -10,8 +9,8 @@ interface ActionMenuProps {
     is_active: boolean;
   };
   onToggleActive: (id: string, active: boolean) => void;
-  onRegenerateSecret: (id: string) => void;
-  onDelete: (id: string) => void;
+  onRegenerateSecret: () => void;
+  onDelete: () => void;
 }
 
 export const ActionMenu: React.FC<ActionMenuProps> = ({
@@ -27,19 +26,17 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
   });
   const buttonRef = useRef<HTMLButtonElement>(null);
 
-  // Position portal dropdown directly below trigger button
   const handleToggle = () => {
     if (!isOpen && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
       setCoords({
         top: rect.bottom + window.scrollY + 4,
-        left: rect.right + window.scrollX - 144, // 144px width (w-36) alignment to right
+        left: rect.right + window.scrollX - 144,
       });
     }
     setIsOpen((prev) => !prev);
   };
 
-  // Close on window scroll or resize
   useEffect(() => {
     if (!isOpen) return;
     const handleScrollOrResize = () => setIsOpen(false);
@@ -61,18 +58,14 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
       >
         <MoreVertical className="w-4 h-4" />
       </button>
-
       {isOpen &&
         typeof window !== "undefined" &&
         createPortal(
           <>
-            {/* Backdrop for click-outside close */}
             <div
               className="z-50 fixed inset-0"
               onClick={() => setIsOpen(false)}
             />
-
-            {/* Portal Dropdown Menu */}
             <div
               style={{
                 top: `${coords.top}px`,
@@ -93,29 +86,19 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
               >
                 {app.is_active ? "Disable" : "Enable"}
               </button>
-
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  if (
-                    confirm(
-                      "This invalidates the current secret key immediately. Continue?",
-                    )
-                  ) {
-                    onRegenerateSecret(app.id);
-                  }
+                  onRegenerateSecret();
                 }}
                 className="hover:bg-slate-800 px-3 py-1.5 rounded-md w-full font-medium text-indigo-300 text-left transition"
               >
                 Regenerate Key
               </button>
-
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  if (confirm("Delete this app permanently?")) {
-                    onDelete(app.id);
-                  }
+                  onDelete();
                 }}
                 className="hover:bg-rose-500/10 px-3 py-1.5 rounded-md w-full font-medium text-rose-400 text-left transition"
               >

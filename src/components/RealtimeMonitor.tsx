@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from "react";
 import { Socket } from "socket.io-client";
 import { logger } from "../lib/logger";
+import { buildSignedAuth } from "../lib/socket-auth";
 
 interface RealtimeMonitorProps {
   socket: Socket | null;
@@ -43,7 +44,9 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   // Auth Inputs (Updated: App Secret instead of Ed25519 Private Key)
   const [authMode, setAuthMode] = useState<"app" | "admin">("app");
   const [appIdInput, setAppIdInput] = useState("app_46958be0cbd7a17c");
-  const [appSecretInput, setAppSecretInput] = useState("123");
+  const [appSecretInput, setAppSecretInput] = useState(
+    `OE5Nji6zMR/N80LaHLkJbxACe0MU4QEjnKu0ks/iutaooUOAheAeO4UayZlLXuwK6P2ZYToAcCv0NRVPf1VphmZ+/gt6BWYnwKa4TiR72561diRkMigV3IB0mo4=`,
+  );
   const [adminSecretInput, setAdminSecretInput] = useState("");
 
   // Channel/Room Management Inputs
@@ -62,6 +65,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   const [emitEventName, setEmitEventName] = useState("notification");
   const [emitPayload, setEmitPayload] = useState('{"message":"hello"}');
   const [emitResult, setEmitResult] = useState<string | null>(null);
+  const [emitUserId, setEmitUserId] = useState("user_123");
 
   useEffect(() => {
     if (!socket) return;
@@ -70,8 +74,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       const roomData = res?.data || res;
       logger.info(roomData);
 
-      if (roomData?.channelId || roomData?.roomId) {
-        const target = roomData.channelId || roomData.roomId;
+      if (roomData?.roomId || roomData?.channelId) {
+        const target = roomData.roomId || roomData.channelId;
         const roomStr = `${roomData.projectId || "default"} / ${roomData.appId || "app"} / ${target}`;
         setJoinedChannels((prev) => [...new Set([...prev, roomStr])]);
       }
@@ -79,7 +83,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
     const onRoomLeft = (res: any) => {
       const roomData = res?.data || res;
-      const target = roomData?.channelId || roomData?.roomId;
+      const target = roomData?.roomId || roomData?.channelId;
       if (target) {
         setJoinedChannels((prev) =>
           prev.filter((r) => !r.endsWith(`/ ${target}`)),
@@ -87,15 +91,11 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       }
     };
 
-    socket.on("channel:joined", onRoomJoined);
     socket.on("room_joined", onRoomJoined);
-    socket.on("channel:left", onRoomLeft);
     socket.on("room_left", onRoomLeft);
 
     return () => {
-      socket.off("channel:joined", onRoomJoined);
       socket.off("room_joined", onRoomJoined);
-      socket.off("channel:left", onRoomLeft);
       socket.off("room_left", onRoomLeft);
     };
   }, [socket]);
@@ -122,24 +122,24 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
   const handleJoinChannel = () => {
     if (!socket || !isConnected) return alert("Connect socket first!");
-    socket.emit("channel:join", {
+    socket.emit("join_room", {
       projectId: projectId.trim(),
       appId: appIdRoom.trim(),
-      channelId: channelId.trim(),
+      roomId: channelId.trim(),
     });
   };
 
   const handleLeaveChannel = () => {
     if (!socket || !isConnected) return alert("Connect socket first!");
-    socket.emit("channel:leave", {
+    socket.emit("leave_room", {
       projectId: projectId.trim(),
       appId: appIdRoom.trim(),
-      channelId: channelId.trim(),
+      roomId: channelId.trim(),
     });
   };
 
   const handleTriggerEmit = async () => {
-    let payload = {};
+    let payload: Record<string, unknown> = {};
     try {
       payload = emitPayload.trim() ? JSON.parse(emitPayload) : {};
     } catch {
@@ -148,18 +148,31 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
     const senderSocketId = socket?.id;
 
+    // Strict mapping matching NestJS Emit DTOs
     const bodyMap = {
-      project: { projectId: emitProjectId, event: emitEventName, payload },
+      project: {
+        projectId: emitProjectId,
+        event: emitEventName,
+        payload,
+        senderSocketId,
+      },
       app: {
         projectId: emitProjectId,
         appId: emitAppId,
         event: emitEventName,
         payload,
+        senderSocketId,
       },
       room: {
         projectId: emitProjectId,
         appId: emitAppId,
-        targetChannel: emitRoomId,
+        roomId: emitRoomId, // Fixed: changed from targetChannel to roomId
+        event: emitEventName,
+        payload,
+        senderSocketId,
+      },
+      user: {
+        userId: emitUserId,
         event: emitEventName,
         payload,
         senderSocketId,
@@ -167,24 +180,34 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     };
 
     try {
-      // const activeSecret =
-      //   authMode === "app" ? appSecretInput : adminSecretInput;
-      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const secret = authMode === "app" ? appSecretInput : adminSecretInput;
+      const signedAuth = await buildSignedAuth(appIdInput, secret);
 
-      const res = await fetch(`/api/v1/s2s/broadcast`, {
+      const baseUrl =
+        process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const endpointUrl = `${baseUrl}/notifications/emit/${emitScope}`;
+
+      const res = await fetch(endpointUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-app-id": appIdInput,
-          "x-timestamp": timestamp,
+          "x-app-id": signedAuth.appId,
+          "x-timestamp": signedAuth.timestamp,
+          "x-signature": signedAuth.signature,
         },
         body: JSON.stringify(bodyMap[emitScope]),
       });
+
       const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.message || `HTTP ${res.status}`);
+      }
+
       setEmitResult(`✓ Dispatched → ${data.status || "Success"}`);
     } catch (e: any) {
       logger.error(e);
-      setEmitResult("✗ Failed to send payload");
+      setEmitResult(`✗ Failed: ${e.message || "Failed to send payload"}`);
     }
   };
 
@@ -269,7 +292,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   {authMode === "app" ? (
                     <div>
                       <label className="block mb-1 font-medium text-[11px] text-slate-300">
-                        App Shared Secret (HMAC-SHA256)
+                        App Secret
                       </label>
                       <input
                         type="password"
@@ -278,9 +301,6 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                         onChange={(e) => setAppSecretInput(e.target.value)}
                         className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                       />
-                      <p className="mt-1 text-[10px] text-slate-500">
-                        HMAC-SHA256 signature generated locally with timestamp.
-                      </p>
                     </div>
                   ) : (
                     <div>
@@ -339,7 +359,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                 <div className="space-y-2.5">
                   <div>
                     <label className="block mb-0.5 text-[10px] text-slate-400">
-                      Project Key
+                      Project ID
                     </label>
                     <input
                       type="text"
@@ -350,7 +370,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   </div>
                   <div>
                     <label className="block mb-0.5 text-[10px] text-slate-400">
-                      App Identifier
+                      App ID
                     </label>
                     <input
                       type="text"
@@ -361,7 +381,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   </div>
                   <div>
                     <label className="block mb-0.5 text-[10px] text-slate-400">
-                      Target Channel ID
+                      Target Topic
                     </label>
                     <input
                       type="text"
@@ -379,14 +399,14 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   disabled={!isConnected}
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow-sm px-3 py-2 rounded-lg font-semibold text-white text-xs transition"
                 >
-                  Join Channel
+                  Join Topic
                 </button>
                 <button
                   onClick={handleLeaveChannel}
                   disabled={!isConnected}
                   className="bg-rose-600/20 hover:bg-rose-600/30 disabled:opacity-50 px-3 py-2 border border-rose-500/30 rounded-lg font-semibold text-rose-400 text-xs transition"
                 >
-                  Leave Channel
+                  Leave Topic
                 </button>
               </div>
             </div>
@@ -396,13 +416,13 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               <div>
                 <div className="flex justify-between items-center mb-3">
                   <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
-                    Subscribed Channels
+                    Subscribed Topics
                   </h3>
                 </div>
                 <ul className="space-y-2 pr-1 max-h-48 overflow-y-auto">
                   {joinedChannels.length === 0 ? (
                     <li className="bg-slate-950/40 p-3 border border-slate-800 border-dashed rounded-lg text-slate-500 text-xs text-center italic">
-                      No active channel subscriptions
+                      No active topic subscriptions
                     </li>
                   ) : (
                     joinedChannels.map((ch, idx) => (
@@ -425,9 +445,9 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
                 3. Server-to-Server (S2S) HMAC Broadcaster
               </h3>
-              <span className="font-mono text-[10px] text-indigo-400">
+              {/* <span className="font-mono text-[10px] text-indigo-400">
                 POST /api/v1/s2s/broadcast
-              </span>
+              </span> */}
             </div>
 
             <div className="gap-3 grid grid-cols-1 md:grid-cols-6">

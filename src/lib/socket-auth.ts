@@ -39,10 +39,9 @@ export async function buildSignedAuth(
   appSecret: string,
 ): Promise<AuthPayload> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const nonce = Math.random().toString(36).substring(2, 10);
 
-  // Payload format: mode:appId:timestamp:nonce
-  const payloadToSign = `app:${appId}:${timestamp}:${nonce}`;
+  // Match backend buildSignedMessage: `${appId}.${timestamp}`
+  const payloadToSign = `${appId}.${timestamp}`;
   const signature = await generateHmacSha256(payloadToSign, appSecret);
 
   return {
@@ -52,20 +51,19 @@ export async function buildSignedAuth(
   };
 }
 
-// 2. Admin Connection Payload Signer (Fixed: Removed raw adminSecret leaks)
+// 2. Admin Connection Payload Signer
 export async function buildAdminSignedAuth(
-  appId: string,
+  adminAppId: string,
   adminSecret: string,
 ): Promise<AuthPayload> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const nonce = Math.random().toString(36).substring(2, 10);
 
-  // Payload format: mode:appId:timestamp:nonce
-  const payloadToSign = `admin:${appId}:${timestamp}:${nonce}`;
+  // Admin also uses `${appId}.${timestamp}` on backend
+  const payloadToSign = `${adminAppId}.${timestamp}`;
   const signature = await generateHmacSha256(payloadToSign, adminSecret);
 
   return {
-    appId,
+    appId: adminAppId,
     timestamp,
     signature,
   };

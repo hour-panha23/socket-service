@@ -1,8 +1,8 @@
 "use client";
-
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Plus, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, Plus, ShieldCheck, X } from "lucide-react";
 import React, { useState } from "react";
+import { toast } from "sonner";
 import { logger } from "../lib/logger";
 import { ActionMenu } from "./ActionMenu";
 
@@ -38,7 +38,6 @@ export const AppManagement: React.FC = () => {
   const queryClient = useQueryClient();
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
-  // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newAppName, setNewAppName] = useState("");
   const [newAppDesc, setNewAppDesc] = useState("");
@@ -49,7 +48,6 @@ export const AppManagement: React.FC = () => {
     secretKey: string;
   } | null>(null);
 
-  // 1. Query for apps list
   const {
     data: apps = [],
     isLoading,
@@ -60,7 +58,6 @@ export const AppManagement: React.FC = () => {
     queryFn: () => fetchJson<AppItem[]>("/apps/list"),
   });
 
-  // 2. Mutations
   const createMutation = useMutation({
     mutationFn: (newApp: { name: string; description?: string }) =>
       fetchJson<AppItem>("/apps/create", {
@@ -73,16 +70,17 @@ export const AppManagement: React.FC = () => {
       setIsCreateOpen(false);
       setNewAppName("");
       setNewAppDesc("");
-      if (data.secret_key) {
-        setSecretModalData({
-          appId: data.app_id,
-          secretKey: data.secret_key,
-        });
-      }
+      toast.success("Application created successfully", {
+        description: `${data.name} is now ready to use`,
+      });
+      if (data.secret_key)
+        setSecretModalData({ appId: data.app_id, secretKey: data.secret_key });
     },
     onError: (err) => {
       logger.error(err);
-      alert("Failed to create app");
+      toast.error("Failed to create app", {
+        description: err instanceof Error ? err.message : "Please try again",
+      });
     },
   });
 
@@ -91,10 +89,15 @@ export const AppManagement: React.FC = () => {
       fetchJson<AppItem>(`/apps/${id}/${active ? "enable" : "disable"}`, {
         method: "PATCH",
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["apps"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+      toast.success("App status updated successfully");
+    },
     onError: (err) => {
       logger.error(err);
-      alert("Failed to update status");
+      toast.error("Failed to update status", {
+        description: err instanceof Error ? err.message : "Please try again",
+      });
     },
   });
 
@@ -104,26 +107,32 @@ export const AppManagement: React.FC = () => {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["apps"] });
       setPendingRegenerateApp(null);
-      if (data.secret_key) {
-        setSecretModalData({
-          appId: data.app_id,
-          secretKey: data.secret_key,
-        });
-      }
+      toast.success("Secret key regenerated", {
+        description: "Your new secret key is displayed below",
+      });
+      if (data.secret_key)
+        setSecretModalData({ appId: data.app_id, secretKey: data.secret_key });
     },
     onError: (err) => {
       logger.error(err);
-      alert("Failed to regenerate secret key");
+      toast.error("Failed to regenerate secret key", {
+        description: err instanceof Error ? err.message : "Please try again",
+      });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) =>
       fetchJson<void>(`/apps/${id}`, { method: "DELETE" }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["apps"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["apps"] });
+      toast.success("App deleted successfully");
+    },
     onError: (err) => {
       logger.error(err);
-      alert("Failed to delete app");
+      toast.error("Failed to delete app", {
+        description: err instanceof Error ? err.message : "Please try again",
+      });
     },
   });
 
@@ -131,6 +140,10 @@ export const AppManagement: React.FC = () => {
     if (!text) return;
     navigator.clipboard.writeText(text);
     setCopiedField(id);
+    toast.success("Copied to clipboard", {
+      duration: 1500,
+      position: "bottom-center",
+    });
     setTimeout(() => setCopiedField(null), 1500);
   };
 
@@ -203,7 +216,6 @@ export const AppManagement: React.FC = () => {
             ) : (
               apps.map((app) => {
                 const appIdCopyId = `app-${app.id}`;
-
                 return (
                   <tr key={app.id} className="hover:bg-slate-800/20 transition">
                     <td className="p-4">
@@ -224,17 +236,33 @@ export const AppManagement: React.FC = () => {
                       </div>
                     </td>
 
+                    {/* FLIP-FLOP TOGGLE WITH INTERNAL TEXT */}
                     <td className="p-4">
-                      <span
-                        className={`px-2.5 py-1 rounded-full text-[10px] font-semibold ${
-                          app.is_active
-                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-slate-800 text-slate-400 border border-slate-700"
+                      <button
+                        onClick={() =>
+                          toggleActiveMutation.mutate({
+                            id: app.id,
+                            active: !app.is_active,
+                          })
+                        }
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-slate-900 ${
+                          app.is_active ? "bg-emerald-500" : "bg-slate-700"
                         }`}
                       >
-                        {app.is_active ? "Active" : "Disabled"}
-                      </span>
+                        <span
+                          className={`inline-flex h-4 w-4 items-center justify-center rounded-full bg-white shadow-sm transition-transform ${
+                            app.is_active ? "translate-x-6" : "translate-x-1"
+                          }`}
+                        >
+                          {app.is_active ? (
+                            <Check className="w-3 h-3 text-emerald-600" />
+                          ) : (
+                            <X className="w-3 h-3 text-slate-500" />
+                          )}
+                        </span>
+                      </button>
                     </td>
+
                     <td className="p-4 font-mono text-slate-400 text-xs">
                       {new Date(app.created_at).toLocaleDateString()}
                     </td>
@@ -245,7 +273,7 @@ export const AppManagement: React.FC = () => {
                           toggleActiveMutation.mutate({ id, active })
                         }
                         onRegenerateSecret={() => setPendingRegenerateApp(app)}
-                        onDelete={(id) => deleteMutation.mutate(id)}
+                        onDelete={() => deleteMutation.mutate(app.id)}
                       />
                     </td>
                   </tr>
@@ -356,63 +384,64 @@ export const AppManagement: React.FC = () => {
       {/* Secret Modal */}
       {secretModalData && (
         <div className="z-50 fixed inset-0 flex justify-center items-center bg-slate-950/80 backdrop-blur-sm p-4">
-          <div className="space-y-4 bg-slate-900 shadow-2xl p-6 border border-amber-500/30 rounded-xl w-full max-w-md">
-            <div className="flex items-center gap-2 text-amber-400">
-              <AlertTriangle className="w-5 h-5 shrink-0" />
-              <h3 className="font-bold text-sm">
-                Secret Key Issued — Save Immediately
-              </h3>
+          <div className="space-y-5 bg-linear-to-br from-slate-900 to-slate-950 shadow-2xl p-8 border border-amber-500/40 rounded-2xl w-full max-w-md">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2.5">
+                <div className="bg-amber-500/15 p-2 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-amber-400" />
+                </div>
+                <h3 className="font-bold text-white text-base">
+                  Secret Key Issued
+                </h3>
+              </div>
+              <p className="ml-9.5 text-slate-400 text-xs">
+                Save these credentials immediately — they won&apos;t be shown
+                again
+              </p>
             </div>
-            <p className="text-slate-400 text-xs leading-relaxed">
-              This secret key is generated once and cannot be retrieved again
-              after closing this dialog.
-            </p>
-
-            <div className="space-y-2">
-              <div className="flex justify-between items-center bg-slate-950 p-3 border border-slate-800 rounded-lg">
-                <div>
-                  <p className="font-semibold text-[10px] text-slate-500 uppercase">
-                    App Identifier
-                  </p>
-                  <p className="mt-0.5 font-mono text-indigo-300 text-xs break-all select-all">
+            <div className="space-y-3 bg-slate-950/50 -mx-8 px-8 py-4 border-slate-800/50 border-t border-b rounded-lg">
+              <div className="space-y-2">
+                <p className="font-semibold text-[10px] text-slate-500 uppercase tracking-wide">
+                  App Identifier
+                </p>
+                <div className="group flex justify-between items-center gap-2 bg-slate-950 p-3 border border-slate-700/50 hover:border-indigo-500/30 rounded-lg transition">
+                  <p className="flex-1 font-mono text-indigo-300 text-sm break-all select-all">
                     {secretModalData.appId}
                   </p>
+                  <button
+                    onClick={() =>
+                      handleCopy(secretModalData.appId, "modal-appid")
+                    }
+                    className={`ml-2 px-3 py-1.5 rounded-lg font-semibold text-[11px] transition shrink-0 whitespace-nowrap ${copiedField === "modal-appid" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-indigo-600 hover:bg-indigo-500 text-white border border-indigo-500/30"}`}
+                  >
+                    {copiedField === "modal-appid" ? "✓ Copied!" : "Copy"}
+                  </button>
                 </div>
-                <button
-                  onClick={() =>
-                    handleCopy(secretModalData.appId, "modal-appid")
-                  }
-                  className="bg-slate-800 hover:bg-slate-700 ml-2 px-2 py-1 border border-slate-700 rounded font-mono text-[10px] text-slate-300 transition shrink-0"
-                >
-                  {copiedField === "modal-appid" ? "Copied!" : "Copy"}
-                </button>
               </div>
-
-              <div className="flex justify-between items-center bg-slate-950 p-3 border border-slate-800 rounded-lg">
-                <div>
-                  <p className="font-semibold text-[10px] text-slate-500 uppercase">
-                    Secret Key
-                  </p>
-                  <p className="mt-0.5 font-mono text-emerald-400 text-xs break-all select-all">
+              <div className="space-y-2">
+                <p className="font-semibold text-[10px] text-slate-500 uppercase tracking-wide">
+                  Secret Key
+                </p>
+                <div className="group flex justify-between items-center gap-2 bg-slate-950 p-3 border border-slate-700/50 hover:border-emerald-500/30 rounded-lg transition">
+                  <p className="flex-1 font-mono text-emerald-400 text-sm break-all select-all">
                     {secretModalData.secretKey}
                   </p>
+                  <button
+                    onClick={() =>
+                      handleCopy(secretModalData.secretKey, "modal-secret")
+                    }
+                    className={`ml-2 px-3 py-1.5 rounded-lg font-semibold text-[11px] transition shrink-0 whitespace-nowrap ${copiedField === "modal-secret" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40" : "bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500/30"}`}
+                  >
+                    {copiedField === "modal-secret" ? "✓ Copied!" : "Copy"}
+                  </button>
                 </div>
-                <button
-                  onClick={() =>
-                    handleCopy(secretModalData.secretKey, "modal-secret")
-                  }
-                  className="bg-slate-800 hover:bg-slate-700 ml-2 px-2 py-1 border border-slate-700 rounded font-mono text-[10px] text-slate-300 transition shrink-0"
-                >
-                  {copiedField === "modal-secret" ? "Copied!" : "Copy"}
-                </button>
               </div>
             </div>
-
             <button
               onClick={() => setSecretModalData(null)}
-              className="bg-slate-800 hover:bg-slate-700 py-2 rounded-lg w-full font-semibold text-slate-200 text-xs transition"
+              className="bg-amber-600/20 hover:bg-amber-600/30 py-2.5 border border-amber-500/30 hover:border-amber-500/50 rounded-lg w-full font-semibold text-amber-200 text-xs transition"
             >
-              I have saved my secret key
+              I have saved my credentials
             </button>
           </div>
         </div>
