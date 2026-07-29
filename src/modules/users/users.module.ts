@@ -3,9 +3,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
-import { AppsController } from './apps.controller';
-import { AppsRepository } from './apps.repo';
-import { AppsService } from './apps.service';
+import { UsersController } from './users.controller';
+import { UsersRepository } from './users.repo';
+import { UsersService } from './users.service';
 
 @Module({
   imports: [
@@ -20,8 +20,8 @@ import { AppsService } from './apps.service';
       inject: [ConfigService],
     }),
   ],
-  controllers: [AppsController],
-  providers: [AppsService, AppsRepository],
-  exports: [AppsService, AppsRepository],
+  controllers: [UsersController],
+  providers: [UsersService, UsersRepository],
+  exports: [UsersService, UsersRepository],
 })
-export class AppsModule {}
+export class UsersModule {}

@@ -10,7 +10,7 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { DefaultEventsMap, Server, Socket } from 'socket.io';
+import { DefaultEventsMap, Namespace, Socket } from 'socket.io';
 import { LoggerService } from '../../common/logger/logger.service';
 import { AppsService } from '../app/apps.service';
 import { NotificationsService } from './notifications.service';
@@ -64,7 +64,7 @@ export class NotificationsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
 {
   @WebSocketServer()
-  server!: Server;
+  server!: Namespace;
 
   constructor(
     private notificationsService: NotificationsService,
@@ -73,7 +73,7 @@ export class NotificationsGateway
     private configService: ConfigService,
   ) {}
 
-  afterInit(server: Server) {
+  afterInit(server: Namespace) {
     this.notificationsService.setServer(server);
     this.logger.debug('NotificationsGateway initialized');
   }
@@ -89,6 +89,8 @@ export class NotificationsGateway
     const query = (client.handshake.query ?? {}) as Record<string, any>;
 
     // Fallback support for both app_id (snake_case) and appId (camelCase)
+    const proId =
+      auth.project_id || headers['x-project-id'] || query.project_id;
     const app_id =
       auth.app_id ||
       auth.appId ||
@@ -99,6 +101,7 @@ export class NotificationsGateway
       auth.timestamp || headers['x-timestamp'] || query.timestamp;
     const signature =
       auth.signature || headers['x-signature'] || query.signature;
+    const userId = auth.user_id || headers['x-user-id'] || query.user_id;
 
     this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
       clientId: client.id,
@@ -177,7 +180,6 @@ export class NotificationsGateway
     }
 
     // Step 4: Standard App Auth Check
-    // Step 4: Standard App Auth Check
     this.logger.debug(`[WS Auth] Verifying standard app signature`, {
       clientId: client.id,
       app_id,
@@ -190,21 +192,14 @@ export class NotificationsGateway
         app_id,
         timestamp,
         signature,
-      );
-
-      const durationMs = Date.now() - startTime;
-      this.logger.debug(
-        `[WS Auth] DB signature check finished in ${durationMs}ms`,
-        {
-          clientId: client.id,
-          appFound: !!app,
-        },
+        proId,
+        userId,
       );
 
       if (!app) {
         this.logger.error(
           `[WS Auth Failed] App signature invalid or app not found in DB`,
-          { clientId: client.id, app_id, durationMs },
+          { clientId: client.id, app_id, proId, userId },
         );
         client.disconnect(true);
         return;
@@ -213,11 +208,17 @@ export class NotificationsGateway
       client.data.app = { appId: app.app_id, name: app.name, isAdmin: false };
       await client.join(`service:${app.app_id}`);
 
-      this.logger.debug(`[WS Auth Success] Standard app connected`, {
-        clientId: client.id,
-        app_id: app.app_id,
-        room: `service:${app.app_id}`,
-      });
+      // only join the private user room if this connection actually verified as user-scoped
+      if (proId && userId) {
+        await client.join(`user:${proId}:${userId}`);
+        this.logger.debug(
+          `Socket ${client.id} auto-joined verified user channel`,
+          {
+            proId,
+            userId,
+          },
+        );
+      }
 
       this.emitConnectEvent(client);
     } catch (error: any) {
@@ -305,6 +306,22 @@ export class NotificationsGateway
     return {
       event: 'room_left',
       data: { status: 'success', roomId: data.roomId },
+    };
+  }
+
+  @UseGuards(WsAppAuthGuard)
+  @SubscribeMessage('join_user_channel')
+  async handleJoinUserChannel(
+    @ConnectedSocket() client: TypedSocket,
+    @MessageBody() data: { userId: string },
+  ) {
+    await client.join(`user:${data.userId}`);
+    this.logger.debug(`Socket ${client.id} joined user channel`, {
+      userId: data.userId,
+    });
+    return {
+      event: 'user_channel_joined',
+      data: { status: 'success', userId: data.userId },
     };
   }
 

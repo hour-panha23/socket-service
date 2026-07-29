@@ -5,8 +5,11 @@ export interface AppRecord {
   name: string;
   description: string | null;
   is_active: boolean;
+  webhook_url: string;
   created_at: Date;
   updated_at: Date;
 }
 
-export type PublicAppRecord = AppRecord;
+export type PublicAppRecord = Omit<AppRecord, 'secret_key'>;
+
+export type AppRecordWithSecret = PublicAppRecord & { secret_key: string };

@@ -1,3 +1,5 @@
+import { LoggerService } from '@/common/logger/logger.service';
+import { exceptionResponse } from '@/libs/response';
 import {
   ArgumentsHost,
   Catch,
@@ -6,9 +8,6 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
-// CRITICAL FIX: Import exceptionResponse instead of customResponse
-import { LoggerService } from '@/common/logger/logger.service';
-import { exceptionResponse } from '@/libs/response';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -24,6 +23,8 @@ export class AllExceptionsFilter implements ExceptionFilter {
       exception instanceof HttpException
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    // console.error('RAW EXCEPTION >>>', exception);
 
     this.logger.logError(exception, 'HttpExceptionFilter', {
       status_code: statusCode,

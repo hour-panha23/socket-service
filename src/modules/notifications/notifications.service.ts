@@ -1,6 +1,10 @@
+import { generateHmacSignature } from '@/common/crypto/signature.util';
 import { logger } from '@/common/logger/logger.service';
+import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
-import { Server } from 'socket.io';
+import { Queue } from 'bullmq';
+import { Namespace } from 'socket.io';
+import { AppsRepository } from '../app/apps.repo';
 
 export interface EmitResult {
   event: string;
@@ -11,11 +15,23 @@ export interface EmitResult {
   timestamp: string;
 }
 
+export interface WebhookRetryJob {
+  appId: string;
+  event: string;
+  payload: Record<string, unknown>;
+  timestamp: string;
+}
+
 @Injectable()
 export class NotificationsService {
-  private server!: Server;
+  private server!: Namespace;
 
-  setServer(server: Server) {
+  constructor(
+    private readonly appRepo: AppsRepository,
+    @InjectQueue('webhook-retry')
+    private readonly webhookQueue: Queue<WebhookRetryJob>,
+  ) {}
+  setServer(server: Namespace) {
     this.server = server;
   }
 
@@ -73,6 +89,7 @@ export class NotificationsService {
 
     emitter.emit(prefixedEvent, payload);
     this.logToAdmin(result, payload);
+    void this.deliverWebhook(target, rawEvent, payload);
 
     logger.debug(
       `[emitAndTrack] Successfully emitted "${prefixedEvent}" to room "${room}" (${result.recipientCount} recipients)`,
@@ -136,33 +153,58 @@ export class NotificationsService {
     );
   }
 
-  // async sendToUser(
-  //   userId: string,
-  //   payload: Record<string, unknown>,
-  //   senderSocketId?: string,
-  // ): Promise<EmitResult> {
-  //   // system-level, user-targeted — deliberately NOT app-prefixed, this is a fixed platform event
-  //   return this.emitAndTrack(
-  //     `user:${userId}`,
-  //     'notification_received',
-  //     payload,
-  //     'user',
-  //     userId,
-  //     'system',
-  //     senderSocketId,
-  //   );
-  // }
+  async sendToUser(
+    projectId: string,
+    userId: string,
+    payload: Record<string, unknown>,
+    senderSocketId?: string,
+  ): Promise<EmitResult> {
+    return this.emitAndTrack(
+      `user:${projectId}:${userId}`,
+      'notification',
+      payload,
+      'user',
+      `${projectId}:${userId}`,
+      'system',
+      senderSocketId,
+    );
+  }
 
+  async sendToAll(
+    event: string,
+    payload: Record<string, unknown>,
+    senderSocketId?: string,
+  ): Promise<EmitResult> {
+    const result: EmitResult = {
+      event: 'notification',
+      rawEvent: event,
+      scope: 'user',
+      target: 'broadcast',
+      recipientCount: this.getConnectedClientCount() - (senderSocketId ? 1 : 0),
+      timestamp: new Date().toISOString(),
+    };
+
+    if (!this.server) return result;
+
+    const emitter = senderSocketId
+      ? this.server.except(senderSocketId)
+      : this.server;
+    emitter.emit('notification', payload);
+    this.logToAdmin(result, payload);
+    return result;
+  }
   // ---- Monitoring reads ----
+
+  // src/modules/notifications/notifications.service.ts
 
   getRoomStats(): { room: string; clientCount: number }[] {
     if (!this.server) return [];
-    const socketIds = new Set(this.server.sockets.sockets.keys());
+    const socketIds = new Set(this.server.sockets.keys()); // was: this.server.sockets.sockets.keys()
     const stats: { room: string; clientCount: number }[] = [];
 
     (this.server.adapter as any).rooms.forEach(
       (sockets: Set<string>, room: string) => {
-        if (socketIds.has(room)) return; // skip socket.io's private per-socket-id rooms
+        if (socketIds.has(room)) return;
         stats.push({ room, clientCount: sockets.size });
       },
     );
@@ -171,6 +213,62 @@ export class NotificationsService {
   }
 
   getConnectedClientCount(): number {
-    return this.server?.sockets.sockets.size ?? 0;
+    return this.server?.sockets.size ?? 0; // was: this.server?.sockets.sockets.size ?? 0
+  }
+
+  private async deliverWebhook(
+    appId: string,
+    event: string,
+    payload: Record<string, unknown>,
+  ) {
+    const app = await this.appRepo.findByAppId(appId);
+    if (!app?.webhook_url) return; // no webhook registered, skip silently
+
+    const timestamp = new Date().toISOString();
+    const body = JSON.stringify({
+      event,
+      payload,
+      timestamp,
+    });
+
+    const signature = generateHmacSignature(Buffer.from(body), app.secret_key);
+
+    try {
+      const response = await fetch(app.webhook_url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-webhook-signature': signature,
+        },
+        body,
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Webhook target responded with status ${response.status}`,
+        );
+      }
+    } catch (err) {
+      logger.error('Webhook delivery failed, pushing to retry queue', {
+        appId,
+        url: app.webhook_url,
+        err,
+      });
+
+      // Push to BullMQ retry queue with exponential backoff
+      await this.webhookQueue.add(
+        'retry-delivery',
+        { appId, event, payload, timestamp },
+        {
+          attempts: 5, // Try up to 5 times
+          backoff: {
+            type: 'exponential',
+            delay: 5000, // Initial delay: 5s, then 10s, 20s, 40s...
+          },
+          removeOnComplete: true,
+          removeOnFail: false, // Keep failed jobs in queue for inspection/dlq
+        },
+      );
+    }
   }
 }

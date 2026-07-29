@@ -7,13 +7,15 @@ import {
   Param,
   Patch,
   Post,
+  UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { CreateAppDto, UpdateAppDto } from './apps.dto';
 import { AppsService } from './apps.service';
+import { JwtAuthGuard } from '@/common/guard/jwt-auth.guard';
 
-// TODO: guard this whole controller with an admin-only auth guard before shipping
 @Controller('apps')
+@UseGuards(JwtAuthGuard)
 @UseInterceptors(TransformInterceptor)
 export class AppsController {
   constructor(private readonly appsService: AppsService) {}

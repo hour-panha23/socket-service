@@ -4,12 +4,14 @@ import { ConfigModule } from '@nestjs/config';
 import { LoggerModule } from './common/logger/logger.module';
 import { HardwareGateway } from './hardware.gateway';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({ isGlobal: true, envFilePath: '.env' }),
     LoggerModule,
     NotificationsModule,
+    UsersModule,
   ],
   providers: [HardwareGateway],
 })

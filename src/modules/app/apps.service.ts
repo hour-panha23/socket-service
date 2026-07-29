@@ -1,21 +1,28 @@
+// import {
+//   decryptSecret,
+//   encryptSecret,
+// } from '@/common/crypto/secret-crypto.util';
+
 import {
   buildSignedMessage,
   isTimestampFresh,
   verifyHmacSignature,
+  verifyUserHmacSignature,
 } from '@/common/crypto/signature.util';
 import { logger } from '@/common/logger/logger.service';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { CreateAppDto, UpdateAppDto } from './apps.dto';
 import { AppsRepository } from './apps.repo';
-import { AppRecord, PublicAppRecord } from './apps.types';
+import { AppRecord, AppRecordWithSecret, PublicAppRecord } from './apps.types';
 
 @Injectable()
 export class AppsService {
   constructor(private readonly appsRepository: AppsRepository) {}
 
   private toPublic(app: AppRecord): PublicAppRecord {
-    return app;
+    const { secret_key, ...rest } = app;
+    return rest;
   }
 
   private generateAppId(): string {
@@ -25,7 +32,8 @@ export class AppsService {
   private generateSecret(): string {
     return randomBytes(32).toString('hex');
   }
-  async create(dto: CreateAppDto) {
+
+  async create(dto: CreateAppDto): Promise<AppRecordWithSecret> {
     const secret = this.generateSecret();
 
     let app: AppRecord | undefined;
@@ -51,7 +59,7 @@ export class AppsService {
       throw new Error('Failed to generate a unique app_id after 3 attempts');
     }
 
-    return this.toPublic(app);
+    return { ...this.toPublic(app), secret_key: secret };
   }
 
   async findAll() {
@@ -82,21 +90,105 @@ export class AppsService {
     if (!deleted) throw new NotFoundException('App not found');
   }
 
-  async regenerateSecret(id: string) {
+  async regenerateSecret(id: string): Promise<AppRecordWithSecret> {
     const secret = this.generateSecret();
-    const app = await this.appsRepository.update(id, { secret_key: secret });
+
+    const app = await this.appsRepository.update(id, {
+      secret_key: secret,
+    });
     if (!app) throw new NotFoundException('App not found');
-    return this.toPublic(app);
+
+    return { ...this.toPublic(app), secret_key: secret };
   }
+
+  // async verifySignature(
+  //   appId: string,
+  //   timestamp: string,
+  //   signatureHex: string,
+  // ) {
+  //   logger.debug(`[VerifySignature Start] Validating signature`, {
+  //     appId,
+  //     timestamp,
+  //     signatureHex: signatureHex ? `${signatureHex.slice(0, 8)}...` : undefined,
+  //   });
+
+  //   // Step 1: Check Timestamp Freshness
+  //   if (!isTimestampFresh(timestamp)) {
+  //     logger.error(`[VerifySignature Failed] Stale timestamp received`, {
+  //       appId,
+  //       timestamp,
+  //       currentTime: Date.now(),
+  //     });
+  //     return null;
+  //   }
+
+  //   // Step 2: Database Lookup
+  //   const dbStartTime = Date.now();
+  //   const app = await this.appsRepository.findByAppId(appId);
+  //   const dbDuration = Date.now() - dbStartTime;
+
+  //   logger.debug('Founded App', app);
+
+  //   if (!app) {
+  //     logger.error(`[VerifySignature Failed] App not found in database`, {
+  //       appId,
+  //       dbDurationMs: dbDuration,
+  //     });
+  //     return null;
+  //   }
+
+  //   if (!app.is_active) {
+  //     logger.error(`[VerifySignature Failed] App is deactivated`, {
+  //       appId,
+  //       appName: app.name,
+  //       isActive: app.is_active,
+  //     });
+  //     return null;
+  //   }
+
+  //   logger.debug(`[VerifySignature] App found in DB`, {
+  //     appId: app.app_id,
+  //     appName: app.name,
+  //     dbDurationMs: dbDuration,
+  //     hasSecretKey: !!app.secret_key,
+  //   });
+
+  //   // Step 3: Signature Verification
+  //   const message = buildSignedMessage(appId, timestamp);
+
+  //   logger.debug('Message', message);
+
+  //   const isValid = verifyHmacSignature(message, signatureHex, app.secret_key);
+
+  //   if (!isValid) {
+  //     logger.error(`[VerifySignature Failed] HMAC signature mismatch`, {
+  //       appId,
+  //       signedMessage: message,
+  //       receivedSignature: signatureHex,
+  //     });
+  //     return null;
+  //   }
+
+  //   logger.debug(`[VerifySignature Success] App authenticated successfully`, {
+  //     appId: app.app_id,
+  //     appName: app.name,
+  //   });
+
+  //   return this.toPublic(app);
+  // }
 
   async verifySignature(
     appId: string,
     timestamp: string,
     signatureHex: string,
+    projectId?: string,
+    userId?: string,
   ) {
     logger.debug(`[VerifySignature Start] Validating signature`, {
       appId,
       timestamp,
+      projectId,
+      userId,
       signatureHex: signatureHex ? `${signatureHex.slice(0, 8)}...` : undefined,
     });
 
@@ -114,8 +206,6 @@ export class AppsService {
     const dbStartTime = Date.now();
     const app = await this.appsRepository.findByAppId(appId);
     const dbDuration = Date.now() - dbStartTime;
-
-    logger.debug('Founded App', app);
 
     if (!app) {
       logger.error(`[VerifySignature Failed] App not found in database`, {
@@ -141,14 +231,28 @@ export class AppsService {
       hasSecretKey: !!app.secret_key,
     });
 
-    // Step 3: Signature Verification
-    const message = buildSignedMessage(appId, timestamp);
-    const isValid = verifyHmacSignature(message, signatureHex, app.secret_key);
+    // Step 3: Signature Verification — branch on whether this is a user-scoped signature
+    const isValid =
+      projectId && userId
+        ? verifyUserHmacSignature(
+            appId,
+            timestamp,
+            projectId,
+            userId,
+            signatureHex,
+            app.secret_key,
+          )
+        : verifyHmacSignature(
+            buildSignedMessage(appId, timestamp),
+            signatureHex,
+            app.secret_key,
+          );
 
     if (!isValid) {
       logger.error(`[VerifySignature Failed] HMAC signature mismatch`, {
         appId,
-        signedMessage: message,
+        projectId,
+        userId,
         receivedSignature: signatureHex,
       });
       return null;
@@ -157,8 +261,15 @@ export class AppsService {
     logger.debug(`[VerifySignature Success] App authenticated successfully`, {
       appId: app.app_id,
       appName: app.name,
+      scoped: !!(projectId && userId),
     });
 
     return this.toPublic(app);
+  }
+
+  async getActiveAppByAppId(appId: string): Promise<AppRecord | null> {
+    const app = await this.appsRepository.findByAppId(appId);
+    if (!app || !app.is_active) return null;
+    return app;
   }
 }

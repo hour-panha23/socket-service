@@ -2,6 +2,7 @@ import { InjectKnex } from '@/common/decorator/database.decorator';
 import { Injectable } from '@nestjs/common';
 import { Knex } from 'knex';
 import { AppRecord } from './apps.types';
+import { DatabaseService } from '@/database/database.service';
 
 @Injectable()
 export class AppsRepository {
@@ -13,6 +14,7 @@ export class AppsRepository {
     name: string;
     description: string | null;
     is_active: boolean;
+    webhook_url?: string;
   }): Promise<AppRecord> {
     const [app] = await this.knex('apps').insert(data).returning('*');
     return app;

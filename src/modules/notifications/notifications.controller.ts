@@ -1,13 +1,17 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
 
+import { HmacAuthGuard } from '@/common/guard/hmac-auth.guard';
 import {
+  EmitBroadcastDto,
   EmitToAppDto,
   EmitToProjectDto,
   EmitToRoomDto,
+  EmitToUserDto,
 } from './notification.dto';
 import { NotificationsService } from './notifications.service';
 
 @Controller('notifications')
+@UseGuards(HmacAuthGuard)
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
@@ -40,6 +44,27 @@ export class NotificationsController {
       body.projectId,
       body.appId,
       body.roomId,
+      body.event,
+      body.payload,
+      body.senderSocketId,
+    );
+    return { success: true, ...result };
+  }
+
+  @Post('emit/user')
+  async emitToUser(@Body() body: EmitToUserDto) {
+    const result = await this.notificationsService.sendToUser(
+      body.projectId,
+      body.userId,
+      body.payload,
+      body.senderSocketId,
+    );
+    return { success: true, ...result };
+  }
+
+  @Post('emit/broadcast')
+  async emitBroadcast(@Body() body: EmitBroadcastDto) {
+    const result = await this.notificationsService.sendToAll(
       body.event,
       body.payload,
       body.senderSocketId,
