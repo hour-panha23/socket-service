@@ -1,25 +1,56 @@
 // auth.controller.ts
+import { JwtRefreshAuthGuard } from '@/common/guard/jwt-auth.guard';
+import { TransformInterceptor } from '@/common/interceptors/transform.interceptor';
+import { logger } from '@/common/logger/logger.service';
 import {
-  JwtAuthGuard,
-  JwtRefreshAuthGuard,
-} from '@/common/guard/jwt-auth.guard';
-import { Controller, Post, Request, UseGuards } from '@nestjs/common';
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Req,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { Request } from 'express';
+import { LoginDto, RefreshTokenDto } from './auth.dto';
 import { AuthService } from './auth.service';
 
 @Controller('auth')
+@UseInterceptors(TransformInterceptor)
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
   @Post('login')
-  async login(@Request() req: any) {
-    // Returns { access_token, refresh_token }
-    return this.authService.getTokens(req.user.id, req.user.email);
+  async login(@Body() loginDto: LoginDto) {
+    return this.authService.login(loginDto);
   }
 
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtRefreshAuthGuard)
   @Post('refresh')
-  async refreshTokens(@Request() req: any) {
-    return this.authService.refreshTokens(req.user.userId, req.user.email);
+  async refreshTokens(@Req() req: RefreshTokenDto) {
+    return this.authService.refreshTokens(req.userId, req.refreshToken);
+  }
+
+  @Get('check-cookies')
+  checkCookies(@Req() req: Request) {
+    // 1. Check parsed cookies (requires cookie-parser middleware)
+    const cookies = req.cookies;
+    const hasCookies = cookies && Object.keys(cookies).length > 0;
+
+    // 2. Check raw Cookie header string
+    const rawCookieHeader = req.headers.cookie;
+
+    logger.info('Parsed Cookies:', cookies);
+    logger.info('Raw Cookie Header:', rawCookieHeader);
+
+    return {
+      hasCookies,
+      cookiesReceived: cookies,
+      rawCookieHeader: rawCookieHeader || 'No cookie header present',
+    };
   }
 }

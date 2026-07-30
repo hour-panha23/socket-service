@@ -4,7 +4,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { Namespace } from 'socket.io';
-import { AppsRepository } from '../app/apps.repo';
+import { ProjectRepository } from '../project/project.repo';
 
 export interface EmitResult {
   event: string;
@@ -16,7 +16,7 @@ export interface EmitResult {
 }
 
 export interface WebhookRetryJob {
-  appId: string;
+  projectId: string;
   event: string;
   payload: Record<string, unknown>;
   timestamp: string;
@@ -27,7 +27,7 @@ export class NotificationsService {
   private server!: Namespace;
 
   constructor(
-    private readonly appRepo: AppsRepository,
+    private readonly projectRepo: ProjectRepository,
     @InjectQueue('webhook-retry')
     private readonly webhookQueue: Queue<WebhookRetryJob>,
   ) {}
@@ -61,9 +61,9 @@ export class NotificationsService {
   ): EmitResult {
     const prefixedEvent = `${prefix}.${rawEvent}`;
 
-    logger.debug(
-      `[emitAndTrack] Preparing to emit event "${prefixedEvent}" (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}]`,
-    );
+    // logger.debug(
+    //   `[emitAndTrack] Preparing to emit event "${prefixedEvent}" (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}]`,
+    // );
 
     const result: EmitResult = {
       event: prefixedEvent,
@@ -91,9 +91,9 @@ export class NotificationsService {
     this.logToAdmin(result, payload);
     void this.deliverWebhook(target, rawEvent, payload);
 
-    logger.debug(
-      `[emitAndTrack] Successfully emitted "${prefixedEvent}" to room "${room}" (${result.recipientCount} recipients)`,
-    );
+    // logger.debug(
+    //   `[emitAndTrack] Successfully emitted "${prefixedEvent}" to room "${room}" (${result.recipientCount} recipients)`,
+    // );
 
     return result;
   }
@@ -217,11 +217,11 @@ export class NotificationsService {
   }
 
   private async deliverWebhook(
-    appId: string,
+    projectId: string,
     event: string,
     payload: Record<string, unknown>,
   ) {
-    const app = await this.appRepo.findByAppId(appId);
+    const app = await this.projectRepo.findByProjectId(projectId);
     if (!app?.webhook_url) return; // no webhook registered, skip silently
 
     const timestamp = new Date().toISOString();
@@ -250,7 +250,7 @@ export class NotificationsService {
       }
     } catch (err) {
       logger.error('Webhook delivery failed, pushing to retry queue', {
-        appId,
+        projectId,
         url: app.webhook_url,
         err,
       });
@@ -258,7 +258,7 @@ export class NotificationsService {
       // Push to BullMQ retry queue with exponential backoff
       await this.webhookQueue.add(
         'retry-delivery',
-        { appId, event, payload, timestamp },
+        { projectId, event, payload, timestamp },
         {
           attempts: 5, // Try up to 5 times
           backoff: {

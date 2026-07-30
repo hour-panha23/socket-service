@@ -6,10 +6,7 @@ import { AuthGuard } from '@nestjs/passport';
 export class JwtAuthGuard extends AuthGuard('jwt') {
   handleRequest(err: any, user: any, info: any) {
     if (err || !user) {
-      throw (
-        err ||
-        new UnauthorizedException('Access denied. Valid JWT token required.')
-      );
+      throw err || new UnauthorizedException('Unauthorized');
     }
     return user;
   }
@@ -19,10 +16,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
 export class JwtRefreshAuthGuard extends AuthGuard('jwt-refresh') {
   handleRequest(err: any, user: any, info: any) {
     if (err || !user) {
-      throw (
-        err ||
-        new UnauthorizedException('Access denied. Valid JWT token required.')
-      );
+      throw err || new UnauthorizedException('Unauthorized');
     }
     return user;
   }

@@ -53,4 +53,12 @@ export class UsersService {
     await this.usersRepo.delete(id);
     return { message: 'User deleted successfully' };
   }
+
+  async findByEmail(email: string) {
+    return this.usersRepo.findByEmail(email);
+  }
+
+  async findById(id: string) {
+    return this.usersRepo.findById(id);
+  }
 }

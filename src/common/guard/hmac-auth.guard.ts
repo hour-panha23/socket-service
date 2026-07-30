@@ -3,7 +3,8 @@ import {
   isTimestampFresh,
   verifyHmacSignature,
 } from '@/common/crypto/signature.util';
-import { AppsService } from '@/modules/app/apps.service';
+import { ProjectService } from '@/modules/project/project.service';
+
 import {
   CanActivate,
   ExecutionContext,
@@ -14,16 +15,16 @@ import { Request } from 'express';
 
 @Injectable()
 export class HmacAuthGuard implements CanActivate {
-  constructor(private readonly appsService: AppsService) {}
+  constructor(private readonly projectsService: ProjectService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request>();
 
-    const appId = req.header('x-app-id');
+    const projectId = req.header('x-project-id');
     const timestamp = req.header('x-timestamp');
     const signature = req.header('x-signature');
 
-    if (!appId || !timestamp || !signature) {
+    if (!projectId || !timestamp || !signature) {
       throw new UnauthorizedException('Missing HMAC auth headers');
     }
 
@@ -31,9 +32,10 @@ export class HmacAuthGuard implements CanActivate {
       throw new UnauthorizedException('Stale or invalid timestamp');
     }
 
-    const app = await this.appsService.getActiveAppByAppId(appId);
-    if (!app) {
-      throw new UnauthorizedException('Unknown or inactive app');
+    const project =
+      await this.projectsService.getActiveProjectByProjectId(projectId);
+    if (!project) {
+      throw new UnauthorizedException('Unknown or inactive project');
     }
 
     // req.rawBody requires { rawBody: true } in main.ts — falls back to
@@ -43,22 +45,22 @@ export class HmacAuthGuard implements CanActivate {
         ? (req as any).rawBody
         : Buffer.from(JSON.stringify(req.body ?? {}));
 
-    // message = "{appId}.{timestamp}." + raw request body bytes
+    // message = "{projectId}.{timestamp}." + raw request body bytes
     const signedMessage = Buffer.concat([
-      Buffer.from(`${appId}.${timestamp}.`),
+      Buffer.from(`${projectId}.${timestamp}.`),
       rawBody,
     ]);
 
     const isValid = verifyHmacSignature(
       signedMessage,
       signature,
-      app.secret_key,
+      project.secret_key,
     );
     if (!isValid) {
       throw new UnauthorizedException('Invalid signature');
     }
 
-    (req as any).authApp = app;
+    (req as any).authProject = project;
     return true;
   }
 }

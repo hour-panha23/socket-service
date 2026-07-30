@@ -32,25 +32,25 @@ export function verifyHmacSignature(
   secret: string,
 ): boolean {
   try {
-    logger.info('message', {
-      message: message.toString('utf-8'),
-      secret: secret,
-      signatureHex: signatureHex,
-    });
+    // logger.debug('message', {
+    //   message: message.toString('utf-8'),
+    //   secret: secret,
+    //   signatureHex: signatureHex,
+    // });
 
     const rawMessage = message.toString('utf-8');
     const expected = createHmac('sha256', secret).update(message).digest();
     const expectedHex = expected.toString('hex');
     const provided = Buffer.from(signatureHex || '', 'hex');
 
-    logger.debug('Signature', {
-      rawMessage,
-      providedSignature: signatureHex,
-      expectedSignature: expectedHex,
-      secretLength: secret?.length ?? 0,
-      expectedByteLength: expected.length,
-      providedByteLength: provided.length,
-    });
+    // logger.debug('Signature', {
+    //   rawMessage,
+    //   providedSignature: signatureHex,
+    //   expectedSignature: expectedHex,
+    //   secretLength: secret?.length ?? 0,
+    //   expectedByteLength: expected.length,
+    //   providedByteLength: provided.length,
+    // });
 
     if (expected.length !== provided.length) {
       logger.warn(
@@ -99,22 +99,58 @@ export function buildUserSignedMessage(
 /**
  * Verifies an incoming user HMAC-SHA256 signature against a secret.
  */
+
 export function verifyUserHmacSignature(
-  appId: string,
-  timestamp: string,
   projectId: string,
+  timestamp: string,
+  appId: string,
   userId: string,
   signatureHex: string,
   secret: string,
 ): boolean {
   try {
     const message = buildUserSignedMessage(appId, timestamp, projectId, userId);
-    const expected = createHmac('sha256', secret).update(message).digest();
-    const provided = Buffer.from(signatureHex, 'hex');
 
-    if (expected.length !== provided.length) return false;
-    return timingSafeEqual(expected, provided);
-  } catch {
+    const expectedBuffer = createHmac('sha256', secret)
+      .update(message)
+      .digest();
+    const expectedHex = expectedBuffer.toString('hex');
+
+    // Normalize signature format (lowercase)
+    const normalizedProvidedHex = signatureHex?.trim().toLowerCase() || '';
+    const providedBuffer = Buffer.from(normalizedProvidedHex, 'hex');
+
+    // logger.debug(
+    //   `[HMAC USER Debug] Inputs: ${JSON.stringify({ projectId, timestamp, appId, userId })}`,
+    // );
+    // logger.debug(`[HMAC USER Debug] Constructed Message Payload: "${message}"`);
+    // logger.debug(`[HMAC USER Debug] Expected Hex: ${expectedHex}`);
+    // logger.debug(`[HMAC USER Debug] Provided Hex: ${normalizedProvidedHex}`);
+
+    // Buffer length check
+    if (expectedBuffer.length !== providedBuffer.length) {
+      logger.warn(
+        `[HMAC Failed] Buffer length mismatch. Expected ${expectedBuffer.length} bytes, got ${providedBuffer.length} bytes (provided length: ${signatureHex?.length ?? 0}).`,
+      );
+      return false;
+    }
+
+    const isValid = timingSafeEqual(expectedBuffer, providedBuffer);
+
+    if (!isValid) {
+      logger.warn(
+        `[HMAC Failed] Signatures do not match for userId: ${userId}`,
+      );
+    } else {
+      logger.debug(`[HMAC Success] Signature verified for userId: ${userId}`);
+    }
+
+    return isValid;
+  } catch (error) {
+    logger.error(
+      `[HMAC Error] Exception during signature verification: ${error instanceof Error ? error.message : error}`,
+      error instanceof Error ? error.stack : undefined,
+    );
     return false;
   }
 }

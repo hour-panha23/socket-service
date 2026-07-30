@@ -4,7 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 
 import { HmacAuthGuard } from '@/common/guard/hmac-auth.guard';
 import { BullModule } from '@nestjs/bullmq';
-import { AppsModule } from '../app/apps.module';
+import { ProjectModule } from '../project/project.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsService } from './notifications.service';
@@ -14,7 +14,7 @@ import { WsAppAuthGuard } from './ws-auth.guard';
 @Module({
   imports: [
     LoggerModule,
-    AppsModule,
+    ProjectModule,
     ConfigModule,
     BullModule.registerQueue({
       name: 'webhook-retry',

@@ -12,7 +12,6 @@ import {
 } from '@nestjs/websockets';
 import { DefaultEventsMap, Namespace, Socket } from 'socket.io';
 import { LoggerService } from '../../common/logger/logger.service';
-import { AppsService } from '../app/apps.service';
 import { NotificationsService } from './notifications.service';
 
 import {
@@ -20,10 +19,11 @@ import {
   isTimestampFresh,
   verifyHmacSignature,
 } from '@/common/crypto/signature.util';
+import { ProjectService } from '../project/project.service';
 import { WsAppAuthGuard } from './ws-auth.guard';
 
 export interface AppData {
-  appId: string;
+  projectId: string;
   name: string;
   isAdmin: boolean;
 }
@@ -69,20 +69,20 @@ export class NotificationsGateway
   constructor(
     private notificationsService: NotificationsService,
     private logger: LoggerService,
-    private appsService: AppsService,
+    private appsService: ProjectService,
     private configService: ConfigService,
   ) {}
 
   afterInit(server: Namespace) {
     this.notificationsService.setServer(server);
-    this.logger.debug('NotificationsGateway initialized');
+    // this.logger.debug('NotificationsGateway initialized');
   }
 
   async handleConnection(client: TypedSocket) {
-    this.logger.debug(`[WS Connect] New incoming connection attempt`, {
-      clientId: client.id,
-      transport: client.conn.transport.name,
-    });
+    // this.logger.debug(`[WS Connect] New incoming connection attempt`, {
+    //   clientId: client.id,
+    //   transport: client.conn.transport.name,
+    // });
 
     const auth = (client.handshake.auth ?? {}) as Record<string, any>;
     const headers = (client.handshake.headers ?? {}) as Record<string, any>;
@@ -90,7 +90,11 @@ export class NotificationsGateway
 
     // Fallback support for both app_id (snake_case) and appId (camelCase)
     const proId =
-      auth.project_id || headers['x-project-id'] || query.project_id;
+      auth.project_id ||
+      auth.projectId ||
+      headers['x-project-id'] ||
+      query.project_id ||
+      query.projectId;
     const app_id =
       auth.app_id ||
       auth.appId ||
@@ -103,23 +107,23 @@ export class NotificationsGateway
       auth.signature || headers['x-signature'] || query.signature;
     const userId = auth.user_id || headers['x-user-id'] || query.user_id;
 
-    this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
-      clientId: client.id,
-      app_id,
-      timestamp,
-      signature: signature ? `${signature.slice(0, 8)}...` : undefined, // truncated for security
-      sources: {
-        authKeys: Object.keys(auth),
-        headerKeys: Object.keys(headers),
-        queryKeys: Object.keys(query),
-      },
-    });
+    // this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
+    //   clientId: client.id,
+    //   proId,
+    //   timestamp,
+    //   signature: signature ? `${signature.slice(0, 8)}...` : undefined, // truncated for security
+    //   sources: {
+    //     authKeys: Object.keys(auth),
+    //     headerKeys: Object.keys(headers),
+    //     queryKeys: Object.keys(query),
+    //   },
+    // });
 
     // Step 1: Missing Credentials Check
-    if (!app_id || !timestamp || !signature) {
+    if (!proId || !timestamp || !signature) {
       this.logger.error(`[WS Auth Failed] Missing credentials`, {
         clientId: client.id,
-        hasAppId: !!app_id,
+        hasProId: !!proId,
         hasTimestamp: !!timestamp,
         hasSignature: !!signature,
       });
@@ -132,7 +136,7 @@ export class NotificationsGateway
     if (!isFresh) {
       this.logger.error(`[WS Auth Failed] Stale timestamp`, {
         clientId: client.id,
-        app_id,
+        proId,
         providedTimestamp: timestamp,
         currentTime: Date.now(),
       });
@@ -144,13 +148,13 @@ export class NotificationsGateway
     const adminAppId = this.configService.get<string>('ADMIN_APP_ID');
     const adminSecretKey = this.configService.get<string>('ADMIN_SECRET_KEY');
 
-    if (adminAppId && adminSecretKey && app_id === adminAppId) {
-      this.logger.debug(`[WS Auth] Attempting admin authentication`, {
-        clientId: client.id,
-        adminAppId,
-      });
+    if (adminAppId && adminSecretKey && proId === '1') {
+      // this.logger.debug(`[WS Auth] Attempting admin authentication`, {
+      //   clientId: client.id,
+      //   adminAppId,
+      // });
 
-      const message = buildSignedMessage(app_id, timestamp);
+      const message = buildSignedMessage(proId, timestamp);
       const isValidAdmin = verifyHmacSignature(
         message,
         signature,
@@ -167,32 +171,36 @@ export class NotificationsGateway
         return;
       }
 
-      client.data.app = { appId: app_id, name: 'Admin Monitor', isAdmin: true };
-      await client.join(`service:${app_id}`);
+      client.data.app = {
+        projectId: proId,
+        name: 'Admin Monitor',
+        isAdmin: true,
+      };
+      await client.join(`service:${proId}`);
 
-      this.logger.debug(`[WS Auth Success] Admin app connected & joined room`, {
-        clientId: client.id,
-        room: `service:${app_id}`,
-      });
+      // this.logger.debug(`[WS Auth Success] Admin app connected & joined room`, {
+      //   clientId: client.id,
+      //   room: `service:${proId}`,
+      // });
 
       this.emitConnectEvent(client);
       return;
     }
 
-    // Step 4: Standard App Auth Check
-    this.logger.debug(`[WS Auth] Verifying standard app signature`, {
-      clientId: client.id,
-      app_id,
-    });
+    // // Step 4: Standard App Auth Check
+    // this.logger.debug(`[WS Auth] Verifying standard app signature`, {
+    //   clientId: client.id,
+    //   proId,
+    // });
 
     const startTime = Date.now();
 
     try {
       const app = await this.appsService.verifySignature(
-        app_id,
+        proId,
         timestamp,
         signature,
-        proId,
+        app_id,
         userId,
       );
 
@@ -205,19 +213,23 @@ export class NotificationsGateway
         return;
       }
 
-      client.data.app = { appId: app.app_id, name: app.name, isAdmin: false };
-      await client.join(`service:${app.app_id}`);
+      client.data.app = {
+        projectId: app.project_id,
+        name: app.name,
+        isAdmin: false,
+      };
+      await client.join(`service:${app.project_id}`);
 
       // only join the private user room if this connection actually verified as user-scoped
       if (proId && userId) {
         await client.join(`user:${proId}:${userId}`);
-        this.logger.debug(
-          `Socket ${client.id} auto-joined verified user channel`,
-          {
-            proId,
-            userId,
-          },
-        );
+        // this.logger.debug(
+        //   `Socket ${client.id} auto-joined verified user channel`,
+        //   {
+        //     proId,
+        //     userId,
+        //   },
+        // );
       }
 
       this.emitConnectEvent(client);
@@ -237,11 +249,11 @@ export class NotificationsGateway
   }
 
   handleDisconnect(client: TypedSocket) {
-    this.logger.debug(`Client disconnected: ${client.id}`);
+    // this.logger.debug(`Client disconnected: ${client.id}`);
     this.server.to('admin:monitor').emit('admin:client_event', {
       type: 'disconnect',
       clientId: client.id,
-      appId: client.data.app?.appId,
+      appId: client.data.app?.projectId,
       timestamp: new Date().toISOString(),
     });
   }
@@ -250,7 +262,7 @@ export class NotificationsGateway
     this.server.to('admin:monitor').emit('admin:client_event', {
       type: 'connect',
       clientId: client.id,
-      appId: client.data.app?.appId,
+      appId: client.data.app?.projectId,
       timestamp: new Date().toISOString(),
     });
   }
@@ -267,16 +279,16 @@ export class NotificationsGateway
 
     await client.join([projectRoom, appRoom, specificRoom]);
 
-    this.logger.debug(`Socket ${client.id} joined hierarchical rooms`, {
-      clientId: client.id,
-      rooms: [projectRoom, appRoom, specificRoom],
-      dto: data,
-    });
+    // this.logger.debug(`Socket ${client.id} joined hierarchical rooms`, {
+    //   clientId: client.id,
+    //   rooms: [projectRoom, appRoom, specificRoom],
+    //   dto: data,
+    // });
 
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'join',
       clientId: client.id,
-      appId: client.data.app?.appId,
+      appId: client.data.app?.projectId,
       rooms: [projectRoom, appRoom, specificRoom],
       timestamp: new Date().toISOString(),
     });
@@ -293,12 +305,12 @@ export class NotificationsGateway
     const specificRoom = `project:${data.projectId}:app:${data.appId}:room:${data.roomId}`;
     await client.leave(specificRoom);
 
-    this.logger.debug(`Socket ${client.id} left room ${specificRoom}`);
+    // this.logger.debug(`Socket ${client.id} left room ${specificRoom}`);
 
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'leave',
       clientId: client.id,
-      appId: client.data.app?.appId,
+      appId: client.data.app?.projectId,
       rooms: [specificRoom],
       timestamp: new Date().toISOString(),
     });
@@ -316,9 +328,9 @@ export class NotificationsGateway
     @MessageBody() data: { userId: string },
   ) {
     await client.join(`user:${data.userId}`);
-    this.logger.debug(`Socket ${client.id} joined user channel`, {
-      userId: data.userId,
-    });
+    // this.logger.debug(`Socket ${client.id} joined user channel`, {
+    //   userId: data.userId,
+    // });
     return {
       event: 'user_channel_joined',
       data: { status: 'success', userId: data.userId },
@@ -331,7 +343,7 @@ export class NotificationsGateway
   @SubscribeMessage('admin:subscribe')
   async handleAdminSubscribe(@ConnectedSocket() client: TypedSocket) {
     await client.join('admin:monitor');
-    this.logger.debug(`Client ${client.id} subscribed to admin monitor`);
+    // this.logger.debug(`Client ${client.id} subscribed to admin monitor`);
     return { event: 'admin:subscribed', data: { status: 'ok' } };
   }
 

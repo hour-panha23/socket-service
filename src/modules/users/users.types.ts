@@ -10,6 +10,8 @@ export interface UserEntity {
   updated_at: Date;
 }
 
+export type PublishUserEntity = Omit<UserEntity, 'password'>;
+
 export type CreateUserData = Omit<
   UserEntity,
   'id' | 'created_at' | 'updated_at'
