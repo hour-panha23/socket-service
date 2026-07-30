@@ -28,25 +28,24 @@ async function generateHmacSha256(
 }
 
 export interface AuthPayload {
-  appId: string;
+  projectId: string;
   timestamp: string;
   signature: string;
 }
 
 // 1. App Connection Payload Signer
 export async function buildSignedAuth(
-  appId: string,
+  projectId: string,
   appSecret: string,
 ): Promise<AuthPayload> {
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
   // Match backend buildSignedMessage: `${appId}.${timestamp}`
-  const payloadToSign = `${appId}.${timestamp}`;
+  const payloadToSign = `${projectId}.${timestamp}`;
   const signature = await generateHmacSha256(payloadToSign, appSecret);
 
   return {
-    appId,
-    timestamp,
+    projectId, timestamp,
     signature,
   };
 }
@@ -63,7 +62,7 @@ export async function buildAdminSignedAuth(
   const signature = await generateHmacSha256(payloadToSign, adminSecret);
 
   return {
-    appId: adminAppId,
+    projectId: adminAppId,
     timestamp,
     signature,
   };

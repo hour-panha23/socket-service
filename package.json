@@ -13,6 +13,7 @@
     "@noble/ed25519": "^3.1.0",
     "@noble/hashes": "^2.2.0",
     "@tanstack/react-query": "^5.101.3",
+    "axios": "^1.18.1",
     "button": "link:@base-ui/react/button",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -10,10 +10,10 @@ function DashboardShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { isConnected } = useSocketContext();
-  const activeTab = pathname.includes("/apps") ? "apps" : "monitoring";
+  const activeTab = pathname.includes("/project") ? "project" : "monitoring";
 
-  const handleTabChange = (tab: "monitoring" | "apps") => {
-    router.push(tab === "monitoring" ? "/monitoring" : "/apps");
+  const handleTabChange = (tab: "monitoring" | "project") => {
+    router.push(tab === "monitoring" ? "/monitoring" : "/project");
   };
 
   return (

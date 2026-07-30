@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 interface ActionMenuProps {
-  app: {
+  project: {
     id: string;
     is_active: boolean;
   };
@@ -14,7 +14,7 @@ interface ActionMenuProps {
 }
 
 export const ActionMenu: React.FC<ActionMenuProps> = ({
-  app,
+  project,
   onToggleActive,
   onRegenerateSecret,
   onDelete,
@@ -76,15 +76,15 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
               <button
                 onClick={() => {
                   setIsOpen(false);
-                  onToggleActive(app.id, !app.is_active);
+                  onToggleActive(project.id, !project.is_active);
                 }}
                 className={`w-full text-left px-3 py-1.5 rounded-md font-medium transition ${
-                  app.is_active
+                  project.is_active
                     ? "text-amber-400 hover:bg-amber-500/10"
                     : "text-emerald-400 hover:bg-emerald-500/10"
                 }`}
               >
-                {app.is_active ? "Disable" : "Enable"}
+                {project.is_active ? "Disable" : "Enable"}
               </button>
               <button
                 onClick={() => {
@@ -102,7 +102,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                 }}
                 className="hover:bg-rose-500/10 px-3 py-1.5 rounded-md w-full font-medium text-rose-400 text-left transition"
               >
-                Delete App
+                Delete Project
               </button>
             </div>
           </>,

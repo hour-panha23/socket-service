@@ -43,9 +43,9 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 }) => {
   // Auth Inputs (Updated: App Secret instead of Ed25519 Private Key)
   const [authMode, setAuthMode] = useState<"app" | "admin">("app");
-  const [appIdInput, setAppIdInput] = useState("app_46958be0cbd7a17c");
-  const [appSecretInput, setAppSecretInput] = useState(
-    `OE5Nji6zMR/N80LaHLkJbxACe0MU4QEjnKu0ks/iutaooUOAheAeO4UayZlLXuwK6P2ZYToAcCv0NRVPf1VphmZ+/gt6BWYnwKa4TiR72561diRkMigV3IB0mo4=`,
+  const [projectIdInput, setProjectIdInput] = useState("app_46958be0cbd7a17c");
+  const [projectSecretInput, setProjectSecretInput] = useState(
+    `b01a6222c0cd4e43628a9775756419ecff45d4979bf4bc782322d326f002af9f`,
   );
   const [adminSecretInput, setAdminSecretInput] = useState("");
 
@@ -101,19 +101,19 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   }, [socket]);
 
   const handleConnect = () => {
-    if (!appIdInput.trim()) return alert("Enter an App ID");
+    if (!projectIdInput.trim()) return alert("Enter an App ID");
 
     if (authMode === "app") {
-      if (!appSecretInput.trim()) return alert("Enter the App HMAC Secret");
+      if (!projectSecretInput.trim()) return alert("Enter the App HMAC Secret");
       connectSocket({
-        appId: appIdInput.trim(),
-        secret: appSecretInput.trim(),
+        appId: projectIdInput.trim(),
+        secret: projectSecretInput.trim(),
         mode: "app",
       });
     } else {
       if (!adminSecretInput.trim()) return alert("Enter the Admin Secret Key");
       connectSocket({
-        appId: appIdInput.trim(),
+        appId: projectIdInput.trim(),
         secret: adminSecretInput.trim(),
         mode: "admin",
       });
@@ -180,8 +180,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     };
 
     try {
-      const secret = authMode === "app" ? appSecretInput : adminSecretInput;
-      const signedAuth = await buildSignedAuth(appIdInput, secret);
+      const secret = authMode === "app" ? projectSecretInput : adminSecretInput;
+      const signedAuth = await buildSignedAuth(projectIdInput, secret);
 
       const baseUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
@@ -191,7 +191,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-app-id": signedAuth.appId,
+          "x-project-id": signedAuth.projectId,
           "x-timestamp": signedAuth.timestamp,
           "x-signature": signedAuth.signature,
         },
@@ -284,8 +284,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                     <input
                       type="text"
                       placeholder="app_xxxxxxxx"
-                      value={appIdInput}
-                      onChange={(e) => setAppIdInput(e.target.value)}
+                      value={projectIdInput}
+                      onChange={(e) => setProjectIdInput(e.target.value)}
                       className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                     />
                   </div>
@@ -297,8 +297,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                       <input
                         type="password"
                         placeholder="App Secret String"
-                        value={appSecretInput}
-                        onChange={(e) => setAppSecretInput(e.target.value)}
+                        value={projectSecretInput}
+                        onChange={(e) => setProjectSecretInput(e.target.value)}
                         className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                       />
                     </div>

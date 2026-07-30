@@ -1,4 +1,5 @@
 "use client";
+
 import { Lock, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
@@ -8,23 +9,55 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setErrorMessage(null);
 
-    // TODO: Replace with your actual authentication logic (e.g., NextAuth, Clerk, custom API)
+    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
+
     try {
-      console.log("Logging in with:", { email, password });
-      // await signIn("credentials", { email, password });
+      const response = await fetch(`${baseUrl}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email, password }),
+      });
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      router.push("/dashboard"); // Redirect after successful login
+      const result = await response.json();
+
+      if (!response.ok || result.status_code !== 200) {
+        throw new Error(result.message || "Invalid email or password");
+      }
+
+      const { user, access_token, refresh_token } = result.data;
+
+      // 1. Save user object in Local Storage
+      localStorage.setItem("user", JSON.stringify(user));
+
+      // 2. Save tokens in Cookies
+      document.cookie = `access_token=${access_token}; path=/; SameSite=Lax; Secure`;
+      document.cookie = `refresh_token=${refresh_token}; path=/; SameSite=Lax; Secure`;
+
+      // Redirect to dashboard on success
+      router.push("/monitoring");
     } catch (error) {
       console.error("Login failed:", error);
+      setErrorMessage(
+        (error as Error).message ||
+          "An unexpected error occurred. Please try again.",
+      );
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" && !isLoading) {
+      handleSubmit(e);
     }
   };
 
@@ -39,6 +72,12 @@ export default function LoginPage() {
             Sign in to your account to continue
           </p>
         </div>
+
+        {errorMessage && (
+          <div className="bg-red-500/10 p-3 border border-red-500/50 rounded-lg text-red-400 text-xs">
+            {errorMessage}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-4">
@@ -57,6 +96,7 @@ export default function LoginPage() {
                   id="email"
                   type="email"
                   required
+                  onKeyDown={handleKeyDown}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="block bg-slate-950 py-2.5 pr-3 pl-10 border border-slate-800 focus:border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full text-slate-200 text-sm transition placeholder-slate-500"
@@ -80,6 +120,7 @@ export default function LoginPage() {
                   id="password"
                   type="password"
                   required
+                  onKeyDown={handleKeyDown}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="block bg-slate-950 py-2.5 pr-3 pl-10 border border-slate-800 focus:border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full text-slate-200 text-sm transition placeholder-slate-500"

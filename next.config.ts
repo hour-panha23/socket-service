@@ -2,6 +2,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  allowedDevOrigins: ["https://decorated-unzip-outer.ngrok-free.de"],
   typescript: {
     ignoreBuildErrors: true,
   },
@@ -20,20 +21,21 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
-        source: "/apps",
-        destination: "http://localhost:4000/apps",
+        source: "/project",
+        destination: "http://localhost:4000/project",
       },
       {
-        source: "/apps/:path*",
-        destination: "http://localhost:4000/apps/:path*",
+        source: "/project/:path*",
+        destination: "http://localhost:4000/project/:path*",
       },
       {
-        source: "/notifications",
-        destination: "http://localhost:4000/notifications",
+        source: "/project",
+        destination: "https://decorated-unzip-outer.ngrok-free.de/project",
       },
       {
-        source: "/notifications/:path*",
-        destination: "http://localhost:4000/notifications/:path*",
+        source: "/project/:path*",
+        destination:
+          "https://decorated-unzip-outer.ngrok-free.de/project/:path*",
       },
     ];
   },

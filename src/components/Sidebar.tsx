@@ -10,8 +10,8 @@ import {
 import React, { useState } from "react";
 
 interface SidebarProps {
-  activeTab: "monitoring" | "apps";
-  setActiveTab: (tab: "monitoring" | "apps") => void;
+  activeTab: "monitoring" | "project";
+  setActiveTab: (tab: "monitoring" | "project") => void;
   isConnected: boolean;
 }
 
@@ -84,15 +84,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             )}
           </button>
           <button
-            onClick={() => setActiveTab("apps")}
+            onClick={() => setActiveTab("project")}
             className={`${
-              activeTab === "apps" ? activeClass : inactiveClass
+              activeTab === "project" ? activeClass : inactiveClass
             } ${isCollapsed ? "justify-center px-0" : ""}`}
-            title="App Management"
+            title="Project Management"
           >
             <KeyRound className="w-4 h-4 shrink-0" />
             {!isCollapsed && (
-              <span className="whitespace-nowrap">App Management</span>
+              <span className="whitespace-nowrap">Project Management</span>
             )}
           </button>
         </nav>
