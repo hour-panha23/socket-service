@@ -6,6 +6,7 @@ import { HardwareGateway } from './hardware.gateway';
 import { AuthModule } from './modules/auth/auth.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProjectModule } from './modules/project/project.module';
+import { PushModule } from './modules/push/push.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     AuthModule,
     ProjectModule,
+    PushModule,
   ],
   providers: [HardwareGateway],
 })

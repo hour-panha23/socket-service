@@ -37,11 +37,8 @@ export class AuthController {
 
   @Get('check-cookies')
   checkCookies(@Req() req: Request) {
-    // 1. Check parsed cookies (requires cookie-parser middleware)
     const cookies = req.cookies;
     const hasCookies = cookies && Object.keys(cookies).length > 0;
-
-    // 2. Check raw Cookie header string
     const rawCookieHeader = req.headers.cookie;
 
     logger.info('Parsed Cookies:', cookies);

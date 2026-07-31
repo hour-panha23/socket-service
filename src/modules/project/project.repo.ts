@@ -21,6 +21,8 @@ export class ProjectRepository {
   }
 
   async findAll(
+    search?: string,
+    filters?: Partial<ProjectRecord>,
     page: number = 1,
     limit: number = 10,
   ): Promise<PaginatedResult<ProjectRecord>> {
@@ -28,27 +30,44 @@ export class ProjectRepository {
     const numericPageSize = Math.max(1, limit);
     const offset = (numericPage - 1) * numericPageSize;
 
-    // Run query for paginated data and total count in parallel
-    const [data, totalCountResult] = await Promise.all([
-      this.knex('projects')
-        .select('*')
-        .orderBy('created_at', 'desc')
-        .limit(numericPageSize)
-        .offset(offset),
-      this.knex('projects')
-        .count<{ count: string | number }>('* as count')
-        .first(),
-    ]);
+    // 1. Build base query with conditional logic
+    const baseQuery = this.knex('projects').where((builder) => {
+      if (search && search.trim() !== '') {
+        // PostgreSQL ilike for case-insensitive search
+        builder.where('name', 'ilike', `%${search.trim()}%`);
+      }
 
-    const total = Number(totalCountResult?.count || 0);
+      if (filters && Object.keys(filters).length > 0) {
+        // Pass clean filters object
+        builder.where(filters);
+      }
+    });
+
+    // 2. Clone base query for accurate count calculation
+    const countQuery = baseQuery
+      .clone()
+      .count<{ count: string | number }>('* as count')
+      .first();
+
+    // 3. Execute data query with pagination and ordering
+    const dataQuery = baseQuery
+      .clone()
+      .select('*')
+      .orderBy('created_at', 'desc')
+      .limit(numericPageSize)
+      .offset(offset);
+
+    const [data, totalCountResult] = await Promise.all([dataQuery, countQuery]);
+
+    const total = Number(totalCountResult?.count ?? 0);
+    const totalPages = Math.ceil(total / numericPageSize);
 
     return {
       data,
-
       total,
       page: numericPage,
       limit: numericPageSize,
-      total_pages: Math.ceil(total / numericPageSize),
+      total_pages: totalPages,
     };
   }
 

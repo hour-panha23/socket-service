@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "217262032620",
+    "project_id": "signal-testing-58d38",
+    "storage_bucket": "signal-testing-58d38.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:217262032620:android:91c12e95edf073024687c9",
+        "android_client_info": {
+          "package_name": "com.vectorasoft.andriod"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA2yKRWEnkbmXNCxoLnQX1uLuVh1UftFW8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

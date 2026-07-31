@@ -25,3 +25,13 @@ export type TypedSocket = Socket<
   DefaultEventsMap,
   CustomSocketData
 >;
+
+export type DevicePlatform = 'ios' | 'android';
+export interface DeviceToken {
+  id: string;
+  userId: string;
+  token: string;
+  platform: DevicePlatform;
+  createdAt: Date;
+  updatedAt: Date;
+}

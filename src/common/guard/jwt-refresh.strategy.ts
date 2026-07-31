@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { JwtPayload } from './jwt.strategy';
 
 @Injectable()
 export class JwtRefreshStrategy extends PassportStrategy(
@@ -13,9 +12,17 @@ export class JwtRefreshStrategy extends PassportStrategy(
 ) {
   constructor(private readonly configService: ConfigService) {
     super({
-      // 1. Extract directly from the cookies object
       jwtFromRequest: ExtractJwt.fromExtractors([
         (req: Request) => {
+          if (req?.headers?.cookie) {
+            const cookies = req.headers.cookie.split(';');
+            const cookie = cookies.find((cookie) =>
+              cookie.startsWith('refresh_token='),
+            );
+            if (cookie) {
+              return cookie.split('=')[1];
+            }
+          }
           return req?.cookies?.refresh_token || null;
         },
       ]),
@@ -28,18 +35,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
     });
   }
 
-  async validate(req: Request, payload: JwtPayload) {
-    // 2. Read from cookies, not Authorization header
-    const refreshToken = req?.cookies?.refresh_token;
-
-    if (!refreshToken) {
-      throw new UnauthorizedException('Refresh token missing');
+  async validate(req: Request, payload: any) {
+    if (!payload?.sub) {
+      throw new UnauthorizedException('Invalid refresh token payload');
     }
-
-    return {
-      userId: payload.sub,
-      email: payload.email,
-      refreshToken,
-    };
+    return { userId: payload.sub, email: payload.email };
   }
 }

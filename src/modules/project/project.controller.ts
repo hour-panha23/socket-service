@@ -1,11 +1,14 @@
 import { JwtAuthGuard } from '@/common/guard/jwt-auth.guard';
 import { TransformInterceptor } from '@/common/interceptors/transform.interceptor';
+import { OffsetPaginationDto } from '@/common/types/base.typs';
 import { exceptionResponse } from '@/libs/response';
 import {
   Body,
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -14,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { CreateProjectDto, UpdateProjectDto } from './project.dto';
 import { ProjectService } from './project.service';
+import { ProjectRecord } from './project.types';
 
 @Controller('projects')
 @UseGuards(JwtAuthGuard)
@@ -21,15 +25,20 @@ import { ProjectService } from './project.service';
 export class ProjectController {
   constructor(private readonly projectsService: ProjectService) {}
 
+  @HttpCode(HttpStatus.OK)
   @Post('create')
   create(@Body() dto: CreateProjectDto) {
-    return this.projectsService.create(dto);
+    try {
+      return this.projectsService.create(dto);
+    } catch {
+      return exceptionResponse;
+    }
   }
 
-  @Get('list')
-  findAll() {
+  @Post('list')
+  findAll(@Body() dto: OffsetPaginationDto<ProjectRecord>) {
     try {
-      return this.projectsService.findAll();
+      return this.projectsService.findAll(dto);
     } catch {
       return exceptionResponse;
     }

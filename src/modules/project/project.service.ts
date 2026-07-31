@@ -5,6 +5,8 @@ import {
   verifyUserHmacSignature,
 } from '@/common/crypto/signature.util';
 import { logger } from '@/common/logger/logger.service';
+import { OffsetPaginationDto } from '@/common/types/base.typs';
+import { formatDateOnly } from '@/common/utils/durationAndDate.utils';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { CreateProjectDto, UpdateProjectDto } from './project.dto';
@@ -21,7 +23,16 @@ export class ProjectService {
 
   private toPublic(project: ProjectRecord): PublicProjectRecord {
     const { secret_key, ...rest } = project;
-    return rest;
+
+    return {
+      ...rest,
+      created_at: rest.created_at
+        ? formatDateOnly(rest.created_at as Date)
+        : null,
+      updated_at: rest.updated_at
+        ? formatDateOnly(rest.updated_at as Date)
+        : null,
+    };
   }
 
   private generateProjectId(): string {
@@ -47,6 +58,7 @@ export class ProjectService {
           name: dto.name,
           description: dto.description ?? null,
           is_active: true,
+          webhook_url: dto.webhook_url,
         });
       } catch (err: any) {
         if (err.code === '23505' && attempts < 3) continue;
@@ -63,15 +75,20 @@ export class ProjectService {
     return { ...this.toPublic(project), secret_key: secret };
   }
 
-  async findAll(page: number = 1, limit: number = 10) {
+  async findAll(dto: OffsetPaginationDto<ProjectRecord>) {
     const paginatedResult = await this.projectsRepository.findAll(
-      page,
-      limit,
+      dto.search,
+      dto.filters,
+      dto.page,
+      dto.limit,
     );
 
     return {
       data: paginatedResult.data.map((a) => this.toPublic(a)),
-      paginatedResult,
+      total: paginatedResult.total,
+      page: paginatedResult.page,
+      limit: paginatedResult.limit,
+      total_pages: paginatedResult.total_pages,
     };
   }
 

@@ -1,4 +1,5 @@
 import { Obj, Str } from '@/common/decorator/field.decorator';
+import { DevicePlatform } from './notifications.types';
 
 export class EmitToProjectDto {
   @Str() projectId!: string;
