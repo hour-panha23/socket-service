@@ -1,5 +1,6 @@
 "use client";
 
+import { login } from "@/src/services/auth/auth.service";
 import { Lock, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
@@ -16,31 +17,19 @@ export default function LoginPage() {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
-
     try {
-      const response = await fetch(`${baseUrl}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      const response = await login(email, password);
 
-      const result = await response.json();
-
-      if (!response.ok || result.status_code !== 200) {
-        throw new Error(result.message || "Invalid email or password");
+      if (response.status_code !== 200) {
+        throw new Error(response.message || "Invalid email or password");
       }
 
-      const { user, access_token, refresh_token } = result.data;
-
       // 1. Save user object in Local Storage
-      localStorage.setItem("user", JSON.stringify(user));
+      localStorage.setItem("user", JSON.stringify(response.data?.user));
 
       // 2. Save tokens in Cookies
-      document.cookie = `access_token=${access_token}; path=/; SameSite=Lax; Secure`;
-      document.cookie = `refresh_token=${refresh_token}; path=/; SameSite=Lax; Secure`;
+      document.cookie = `access_token=${response.data?.access_token}; path=/; SameSite=Lax; Secure`;
+      document.cookie = `refresh_token=${response.data?.refresh_token}; path=/; SameSite=Lax; Secure`;
 
       // Redirect to dashboard on success
       router.push("/monitoring");
