@@ -41,31 +41,33 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   emitLogs,
   connectedClientCount,
 }) => {
-  // Auth Inputs (Updated: App Secret instead of Ed25519 Private Key)
-  const [authMode, setAuthMode] = useState<"app" | "admin">("app");
-  const [projectIdInput, setProjectIdInput] = useState("app_46958be0cbd7a17c");
-  const [projectSecretInput, setProjectSecretInput] = useState(
-    `b01a6222c0cd4e43628a9775756419ecff45d4979bf4bc782322d326f002af9f`,
+  // Auth Inputs
+  const [projectIdInput, setProjectIdInput] = useState(
+    "project_e4de70df23a96fdb",
   );
-  const [adminSecretInput, setAdminSecretInput] = useState("");
+  const [projectSecretInput, setProjectSecretInput] = useState(
+    `e7f8a49a3e5cf1556e67494fad9c959166a1e5cf2740377a671d5e33f610cae0`,
+  );
 
   // Channel/Room Management Inputs
-  const [projectId, setProjectId] = useState("proj_siksara");
+  const [projectId, setProjectId] = useState("project_e4de70df23a96fdb");
   const [appIdRoom, setAppIdRoom] = useState("learning_hub");
   const [channelId, setChannelId] = useState("course_101");
   const [joinedChannels, setJoinedChannels] = useState<string[]>([]);
 
   // S2S REST Dispatch Inputs
-  const [emitScope, setEmitScope] = useState<"project" | "app" | "room">(
-    "room",
+  const [emitScope, setEmitScope] = useState<
+    "project" | "app" | "room" | "user" | "broadcast"
+  >("room");
+  const [emitProjectId, setEmitProjectId] = useState(
+    "project_e4de70df23a96fdb",
   );
-  const [emitProjectId, setEmitProjectId] = useState("proj_siksara");
   const [emitAppId, setEmitAppId] = useState("learning_hub");
   const [emitRoomId, setEmitRoomId] = useState("course_101");
+  const [emitUserId, setEmitUserId] = useState("user_123");
   const [emitEventName, setEmitEventName] = useState("notification");
   const [emitPayload, setEmitPayload] = useState('{"message":"hello"}');
   const [emitResult, setEmitResult] = useState<string | null>(null);
-  const [emitUserId, setEmitUserId] = useState("user_123");
 
   useEffect(() => {
     if (!socket) return;
@@ -102,22 +104,13 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
   const handleConnect = () => {
     if (!projectIdInput.trim()) return alert("Enter an App ID");
+    if (!projectSecretInput.trim()) return alert("Enter the App HMAC Secret");
 
-    if (authMode === "app") {
-      if (!projectSecretInput.trim()) return alert("Enter the App HMAC Secret");
-      connectSocket({
-        appId: projectIdInput.trim(),
-        secret: projectSecretInput.trim(),
-        mode: "app",
-      });
-    } else {
-      if (!adminSecretInput.trim()) return alert("Enter the Admin Secret Key");
-      connectSocket({
-        appId: projectIdInput.trim(),
-        secret: adminSecretInput.trim(),
-        mode: "admin",
-      });
-    }
+    connectSocket({
+      appId: projectIdInput.trim(),
+      secret: projectSecretInput.trim(),
+      mode: "app",
+    });
   };
 
   const handleJoinChannel = () => {
@@ -148,44 +141,39 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
 
     const senderSocketId = socket?.id;
 
-    // Strict mapping matching NestJS Emit DTOs
-    const bodyMap = {
-      project: {
-        projectId: emitProjectId,
-        event: emitEventName,
-        payload,
-        senderSocketId,
-      },
-      app: {
-        projectId: emitProjectId,
-        appId: emitAppId,
-        event: emitEventName,
-        payload,
-        senderSocketId,
-      },
-      room: {
-        projectId: emitProjectId,
-        appId: emitAppId,
-        roomId: emitRoomId, // Fixed: changed from targetChannel to roomId
-        event: emitEventName,
-        payload,
-        senderSocketId,
-      },
-      user: {
-        userId: emitUserId,
-        event: emitEventName,
-        payload,
-        senderSocketId,
-      },
+    const bodyPayload: Record<string, any> = {
+      event: emitEventName,
+      payload,
+      senderSocketId,
     };
 
+    if (emitScope === "broadcast") {
+      // Global broadcast - no tenant IDs attached
+    } else if (emitScope === "project") {
+      bodyPayload.project_id = emitProjectId;
+    } else if (emitScope === "app") {
+      bodyPayload.project_id = emitProjectId;
+      bodyPayload.app_id = emitAppId;
+    } else if (emitScope === "room") {
+      bodyPayload.project_id = emitProjectId;
+      bodyPayload.app_id = emitAppId;
+      bodyPayload.room = emitRoomId;
+    } else if (emitScope === "user") {
+      bodyPayload.project_id = emitProjectId;
+      bodyPayload.app_id = emitAppId;
+      bodyPayload.user_id = emitUserId;
+    }
+
     try {
-      const secret = authMode === "app" ? projectSecretInput : adminSecretInput;
-      const signedAuth = await buildSignedAuth(projectIdInput, secret);
+      const secret = projectSecretInput;
+      const targetProjectId = bodyPayload.project_id || projectIdInput;
+
+      const jsonBodyString = JSON.stringify(bodyPayload);
+      const signedAuth = await buildSignedAuth(targetProjectId, secret);
 
       const baseUrl =
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-      const endpointUrl = `${baseUrl}/notifications/emit/${emitScope}`;
+      const endpointUrl = `${baseUrl}/notifications/emit`;
 
       const res = await fetch(endpointUrl, {
         method: "POST",
@@ -195,7 +183,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
           "x-timestamp": signedAuth.timestamp,
           "x-signature": signedAuth.signature,
         },
-        body: JSON.stringify(bodyMap[emitScope]),
+        body: jsonBodyString,
       });
 
       const data = await res.json();
@@ -204,7 +192,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
         throw new Error(data.message || `HTTP ${res.status}`);
       }
 
-      setEmitResult(`✓ Dispatched → ${data.status || "Success"}`);
+      setEmitResult(`✓ Dispatched → Scope: ${data.scope || "Success"}`);
     } catch (e: any) {
       logger.error(e);
       setEmitResult(`✗ Failed: ${e.message || "Failed to send payload"}`);
@@ -252,70 +240,33 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
                     1. HMAC-SHA256 Client Auth
                   </h3>
-                  <div className="flex bg-slate-950 p-0.5 border border-slate-800 rounded-lg">
-                    <button
-                      onClick={() => setAuthMode("app")}
-                      className={`px-2 py-0.5 text-[10px] rounded-md transition ${
-                        authMode === "app"
-                          ? "bg-indigo-600 text-white"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      App
-                    </button>
-                    <button
-                      onClick={() => setAuthMode("admin")}
-                      className={`px-2 py-0.5 text-[10px] rounded-md transition ${
-                        authMode === "admin"
-                          ? "bg-amber-600 text-white"
-                          : "text-slate-400"
-                      }`}
-                    >
-                      Admin
-                    </button>
-                  </div>
                 </div>
 
                 <div className="space-y-3">
                   <div>
                     <label className="block mb-1 font-medium text-[11px] text-slate-300">
-                      App ID
+                      Project ID
                     </label>
                     <input
                       type="text"
-                      placeholder="app_xxxxxxxx"
+                      placeholder="project_xxxxxxxx"
                       value={projectIdInput}
                       onChange={(e) => setProjectIdInput(e.target.value)}
                       className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
                     />
                   </div>
-                  {authMode === "app" ? (
-                    <div>
-                      <label className="block mb-1 font-medium text-[11px] text-slate-300">
-                        App Secret
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="App Secret String"
-                        value={projectSecretInput}
-                        onChange={(e) => setProjectSecretInput(e.target.value)}
-                        className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
-                      />
-                    </div>
-                  ) : (
-                    <div>
-                      <label className="block mb-1 font-medium text-[11px] text-slate-300">
-                        Admin Secret Key
-                      </label>
-                      <input
-                        type="password"
-                        placeholder="ADMIN_SECRET_KEY"
-                        value={adminSecretInput}
-                        onChange={(e) => setAdminSecretInput(e.target.value)}
-                        className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-500 w-full font-mono text-slate-200 text-xs"
-                      />
-                    </div>
-                  )}
+                  <div>
+                    <label className="block mb-1 font-medium text-[11px] text-slate-300">
+                      App Secret
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="App Secret String"
+                      value={projectSecretInput}
+                      onChange={(e) => setProjectSecretInput(e.target.value)}
+                      className="bg-slate-950 px-3 py-2 border border-slate-800 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full font-mono text-slate-200 text-xs"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -445,9 +396,6 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
               <h3 className="font-semibold text-slate-400 text-xs uppercase tracking-wider">
                 3. Server-to-Server (S2S) HMAC Broadcaster
               </h3>
-              {/* <span className="font-mono text-[10px] text-indigo-400">
-                POST /api/v1/s2s/broadcast
-              </span> */}
             </div>
 
             <div className="gap-3 grid grid-cols-1 md:grid-cols-6">
@@ -460,23 +408,31 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   onChange={(e) => setEmitScope(e.target.value as any)}
                   className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-medium text-slate-200 text-xs"
                 >
+                  <option value="broadcast">Global Broadcast</option>
                   <option value="project">Project Scope</option>
                   <option value="app">App Scope</option>
                   <option value="room">Channel Scope</option>
+                  <option value="user">User Scope</option>
                 </select>
               </div>
-              <div>
-                <label className="block mb-1 text-[10px] text-slate-400">
-                  Project ID
-                </label>
-                <input
-                  type="text"
-                  value={emitProjectId}
-                  onChange={(e) => setEmitProjectId(e.target.value)}
-                  className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-mono text-slate-200 text-xs"
-                />
-              </div>
-              {emitScope !== "project" && (
+
+              {emitScope !== "broadcast" && (
+                <div>
+                  <label className="block mb-1 text-[10px] text-slate-400">
+                    Project ID
+                  </label>
+                  <input
+                    type="text"
+                    value={emitProjectId}
+                    onChange={(e) => setEmitProjectId(e.target.value)}
+                    className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-mono text-slate-200 text-xs"
+                  />
+                </div>
+              )}
+
+              {(emitScope === "app" ||
+                emitScope === "room" ||
+                emitScope === "user") && (
                 <div>
                   <label className="block mb-1 text-[10px] text-slate-400">
                     App ID
@@ -489,6 +445,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   />
                 </div>
               )}
+
               {emitScope === "room" && (
                 <div>
                   <label className="block mb-1 text-[10px] text-slate-400">
@@ -502,6 +459,21 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   />
                 </div>
               )}
+
+              {emitScope === "user" && (
+                <div>
+                  <label className="block mb-1 text-[10px] text-slate-400">
+                    User ID
+                  </label>
+                  <input
+                    type="text"
+                    value={emitUserId}
+                    onChange={(e) => setEmitUserId(e.target.value)}
+                    className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-mono text-slate-200 text-xs"
+                  />
+                </div>
+              )}
+
               <div>
                 <label className="block mb-1 text-[10px] text-slate-400">
                   Event Name
@@ -513,6 +485,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   className="bg-slate-950 p-2 border border-slate-800 rounded-lg w-full font-mono text-indigo-300 text-xs"
                 />
               </div>
+
               <div className="flex items-end">
                 <button
                   onClick={handleTriggerEmit}

@@ -31,7 +31,7 @@ export const ProjectManagement: React.FC = () => {
   });
 
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(10);
+  const [limit] = useState(10);
   const [alertDialog, setAlertDialog] = useState<AlertDialogState | null>(null);
   const [selectProject, setSelectProject] = useState<Project | null>(null);
 
@@ -118,8 +118,10 @@ export const ProjectManagement: React.FC = () => {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["list-project"] });
       toast.success("Project deleted successfully", {
-        description: `${data?.data?.name} is now deleted`,
+        description: `${data?.data?.name || "Project"} is now deleted`,
       });
+      setAlertDialog(null);
+      setSelectProject(null);
     },
     onError: (err) => {
       logger.error(err);
@@ -388,7 +390,7 @@ export const ProjectManagement: React.FC = () => {
         </table>
       </div>
 
-      {/* Extracted Create Modal Component */}
+      {/* Modals */}
       <ProjectModal
         key={selectProject?.id || "create-project-modal"}
         isOpen={isCreateOpen}
@@ -423,13 +425,13 @@ export const ProjectManagement: React.FC = () => {
           if (alertDialog?.onConfirm) {
             alertDialog.onConfirm();
           }
-          setAlertDialog(null);
         }}
         onCancel={() => {
           if (alertDialog?.onCancel) {
             alertDialog.onCancel();
           } else {
             setAlertDialog(null);
+            setSelectProject(null);
           }
         }}
         onClose={() => {
@@ -438,7 +440,6 @@ export const ProjectManagement: React.FC = () => {
         }}
       />
 
-      {/* Secret Modal */}
       <SecretModal
         data={secretModalData}
         onClose={() => setSecretModalData(null)}
