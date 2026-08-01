@@ -1,39 +1,58 @@
 import { Obj, Str } from '@/common/decorator/field.decorator';
-import { DevicePlatform } from './notifications.types';
 
 export class EmitToProjectDto {
-  @Str() projectId!: string;
+  @Str() project_id!: string;
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
-  @Str(true) senderSocketId?: string;
+  @Str(true) sender_socket_id?: string;
 }
 
 export class EmitToAppDto {
-  @Str() projectId!: string;
-  @Str() appId!: string;
+  @Str() project_id!: string;
+  @Str() app_id!: string;
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
-  @Str(true) senderSocketId?: string;
+  @Str(true) sender_socket_id?: string;
 }
 
 export class EmitToRoomDto {
-  @Str() projectId!: string;
-  @Str() appId!: string;
-  @Str() roomId!: string;
+  @Str() project_id!: string;
+  @Str() app_id!: string;
+  @Str() room!: string;
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
-  @Str(true) senderSocketId?: string;
+  @Str(true) sender_socket_id?: string;
 }
 
 export class EmitToUserDto {
-  @Str() projectId!: string;
-  @Str() userId!: string;
+  @Str() project_id!: string;
+  @Str() app_id!: string;
+  @Str() user_id!: string;
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
-  @Str(true) senderSocketId?: string;
+  @Str(true) sender_socket_id?: string;
 }
 export class EmitBroadcastDto {
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
-  @Str(true) senderSocketId?: string;
+  @Str(true) sender_socket_id?: string;
+}
+
+export class EmitMessageDto {
+  @Str(true) user_id?: string;
+  @Str(true) project_id!: string;
+  @Str(true) app_id!: string;
+  @Str(true) room!: string;
+  @Str() event!: string;
+  @Obj() payload!: Record<string, unknown>;
+  @Str(true) sender_socket_id?: string;
+}
+
+export class EmitBoardCastMessageDtp {
+  @Str() project_id!: string;
+  @Str(true) app_id!: string;
+  @Str(true) room!: string;
+  @Str() event!: string;
+  @Obj() payload!: Record<string, unknown>;
+  @Str(true) sender_socket_id?: string;
 }

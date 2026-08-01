@@ -46,10 +46,7 @@ export class HmacAuthGuard implements CanActivate {
         : Buffer.from(JSON.stringify(req.body ?? {}));
 
     // message = "{projectId}.{timestamp}." + raw request body bytes
-    const signedMessage = Buffer.concat([
-      Buffer.from(`${projectId}.${timestamp}.`),
-      rawBody,
-    ]);
+    const signedMessage = Buffer.from(`${projectId}.${timestamp}`);
 
     const isValid = verifyHmacSignature(
       signedMessage,

@@ -5,6 +5,7 @@ import { Injectable } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import { Namespace } from 'socket.io';
 import { ProjectRepository } from '../project/project.repo';
+import { EmitMessageDto } from './notification.dto';
 
 export interface EmitResult {
   event: string;
@@ -56,17 +57,14 @@ export class NotificationsService {
     payload: Record<string, unknown>,
     scope: EmitResult['scope'],
     target: string,
-    prefix: string,
     senderSocketId?: string,
   ): EmitResult {
-    const prefixedEvent = `${prefix}.${rawEvent}`;
-
     // logger.debug(
     //   `[emitAndTrack] Preparing to emit event "${prefixedEvent}" (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}]`,
     // );
 
     const result: EmitResult = {
-      event: prefixedEvent,
+      event: rawEvent,
       rawEvent,
       scope,
       target,
@@ -76,7 +74,7 @@ export class NotificationsService {
 
     if (!this.server) {
       logger.warn(
-        `[emitAndTrack] Skipped emit for "${prefixedEvent}" — Socket server is not initialized!`,
+        `[emitAndTrack] Skipped emit for "${rawEvent}" — Socket server is not initialized!`,
       );
       return result;
     }
@@ -87,7 +85,7 @@ export class NotificationsService {
       ? this.server.to(room).except(senderSocketId) // exclude the sender's own socket
       : this.server.to(room);
 
-    emitter.emit(prefixedEvent, payload);
+    emitter.emit(rawEvent, payload);
     this.logToAdmin(result, payload);
     void this.deliverWebhook(target, rawEvent, payload);
 
@@ -111,7 +109,6 @@ export class NotificationsService {
       payload,
       'project',
       projectId,
-      projectId,
       senderSocketId,
     );
   }
@@ -129,7 +126,6 @@ export class NotificationsService {
       payload,
       'app',
       `${projectId}:${appId}`,
-      appId,
       senderSocketId,
     );
   }
@@ -148,24 +144,24 @@ export class NotificationsService {
       payload,
       'room',
       roomId,
-      appId,
       senderSocketId,
     );
   }
 
   async sendToUser(
     projectId: string,
+    appId: string,
     userId: string,
+    event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
   ): Promise<EmitResult> {
     return this.emitAndTrack(
-      `user:${projectId}:${userId}`,
-      'notification',
+      `user:${projectId}:${appId}:${userId}`,
+      event,
       payload,
       'user',
-      `${projectId}:${userId}`,
-      'system',
+      `${projectId}:${appId}:${userId}`,
       senderSocketId,
     );
   }
@@ -193,6 +189,62 @@ export class NotificationsService {
     this.logToAdmin(result, payload);
     return result;
   }
+
+  async sendMessage(body: EmitMessageDto) {
+    const {
+      project_id,
+      app_id,
+      room,
+      user_id,
+      event,
+      payload,
+      sender_socket_id,
+    } = body;
+
+    // Target User
+    if (user_id && app_id && project_id) {
+      return this.sendToUser(
+        project_id,
+        app_id,
+        user_id,
+        event,
+        payload,
+        sender_socket_id,
+      );
+    }
+
+    // Target room within app & project
+    if (room && app_id && project_id) {
+      return this.sendToRoom(
+        project_id,
+        app_id,
+        room,
+        event,
+        payload,
+        sender_socket_id,
+      );
+    }
+
+    // Target application within project
+    if (app_id && project_id) {
+      return this.sendToApp(
+        project_id,
+        app_id,
+        event,
+        payload,
+        sender_socket_id,
+      );
+    }
+
+    // Target whole project
+    if (project_id) {
+      return this.sendToProject(project_id, event, payload, sender_socket_id);
+    }
+
+    // Broadcast to all connected clients
+    return this.sendToAll(event, payload, sender_socket_id);
+  }
+
   // ---- Monitoring reads ----
 
   // src/modules/notifications/notifications.service.ts

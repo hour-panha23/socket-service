@@ -32,25 +32,25 @@ export function verifyHmacSignature(
   secret: string,
 ): boolean {
   try {
-    // logger.debug('message', {
-    //   message: message.toString('utf-8'),
-    //   secret: secret,
-    //   signatureHex: signatureHex,
-    // });
+    logger.debug('message', {
+      message: message.toString('utf-8'),
+      secret: secret,
+      signatureHex: signatureHex,
+    });
 
     const rawMessage = message.toString('utf-8');
     const expected = createHmac('sha256', secret).update(message).digest();
     const expectedHex = expected.toString('hex');
     const provided = Buffer.from(signatureHex || '', 'hex');
 
-    // logger.debug('Signature', {
-    //   rawMessage,
-    //   providedSignature: signatureHex,
-    //   expectedSignature: expectedHex,
-    //   secretLength: secret?.length ?? 0,
-    //   expectedByteLength: expected.length,
-    //   providedByteLength: provided.length,
-    // });
+    logger.debug('Signature', {
+      rawMessage,
+      providedSignature: signatureHex,
+      expectedSignature: expectedHex,
+      secretLength: secret?.length ?? 0,
+      expectedByteLength: expected.length,
+      providedByteLength: provided.length,
+    });
 
     if (expected.length !== provided.length) {
       logger.warn(
