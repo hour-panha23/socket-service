@@ -5,89 +5,37 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { WebSocket, WebSocketServer } from 'ws';
-import { DeviceService } from './modules/device/device.service';
 import { NotificationsService } from './modules/notifications/notifications.service';
 
+/**
+ * TODO: replace with your real device registry (Postgres table, config, whatever).
+ * Keyed by device serial number (payload.sn) so each physical terminal can be
+ * routed to the correct project/app/room, and unknown SNs get rejected instead
+ * of silently falling back to some other real device's identity.
+ */
 interface DeviceRoute {
   projectId: string;
   appId: string;
   roomId: string;
-  event: string;
-  webhook?: string;
 }
 
-interface CacheEntry {
-  route: DeviceRoute | null;
-  expiresAt: number;
-}
+const DEVICE_REGISTRY: Record<string, DeviceRoute> = {
+  AYTE18055378: {
+    projectId: 'project_e4de70df23a96fdb',
+    appId: '8AE496F4C88EB47721B5B202EBDBC546',
+    roomId: 'attendance_scan',
+  },
+};
 
 const DUPLICATE_SCAN_WINDOW_MS = 3000; // debounce same user/device double-taps
-const DEVICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — avoid hitting DB on every scan
 
 @Injectable()
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private readonly lastScanAt = new Map<string, number>();
-  private readonly deviceCache = new Map<string, CacheEntry>();
+  private readonly lastScanAt = new Map<string, number>(); // `${sn}:${userId}` -> timestamp
 
-  constructor(
-    private readonly notificationsService: NotificationsService,
-    private readonly devicesService: DeviceService,
-  ) {}
-
-  /** Device serials are inconsistent in casing across firmware vs DB — normalize once, everywhere. */
-  private normalizeSn(sn: string): string {
-    return String(sn ?? '').toLowerCase();
-  }
-
-  private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
-    const sn = this.normalizeSn(rawSn);
-    const cached = this.deviceCache.get(sn);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.route;
-    }
-
-    try {
-      const data = await this.devicesService.getProjectForDevice(sn);
-
-      this.logger.debug(
-        `getProjectForDevice(${sn}) raw response: ${JSON.stringify(data)}`,
-      );
-
-      if (!data) {
-        this.logger.warn(
-          `No device row found for sn=${sn} (normalized). Check that device_serial in DB matches exactly.`,
-        );
-        this.deviceCache.set(sn, {
-          route: null,
-          expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-        });
-        return null;
-      }
-
-      const route: DeviceRoute = {
-        projectId: data.project_id,
-        appId: data.app_id,
-        roomId: data.room,
-        event: data.event,
-        webhook: data.webhook,
-      };
-
-      this.deviceCache.set(sn, {
-        route,
-        expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-      });
-      return route;
-    } catch (err) {
-      // DB/network failure — don't cache this, so the next scan retries the lookup
-      // instead of getting stuck treating a temporary outage as "unregistered".
-      this.logger.error(
-        `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
-      );
-      return null;
-    }
-  }
+  constructor(private readonly notificationsService: NotificationsService) {}
 
   onModuleInit() {
     this.wss = new WebSocketServer({
@@ -139,7 +87,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
           // 1. Device registration / heartbeat
           if (payload.cmd === 'reg') {
-            await this.handleRegistration(ws, payload);
+            this.handleRegistration(ws, payload);
             return;
           }
 
@@ -183,9 +131,9 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  private async handleRegistration(ws: WebSocket, payload: any) {
+  private handleRegistration(ws: WebSocket, payload: any) {
     const sn = payload.sn;
-    const route = await this.resolveDeviceRoute(sn);
+    const route = DEVICE_REGISTRY[sn];
 
     if (!route) {
       // Reject unknown devices instead of letting them push data into a
@@ -216,7 +164,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
   private async handleScanLog(ws: WebSocket, payload: any) {
     const sn = payload.sn;
-    const route = await this.resolveDeviceRoute(sn);
+    const route = DEVICE_REGISTRY[sn];
 
     if (!route) {
       this.logger.warn(`Scan log rejected: unregistered device sn=${sn}`);
@@ -270,14 +218,14 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       const scannedAt = record.time || new Date().toISOString();
 
       this.logger.log(
-        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} at ${scannedAt}`,
+        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} at ${scannedAt}`,
       );
 
       await this.notificationsService.sendToRoom(
         route.projectId,
         route.appId,
         route.roomId,
-        route.event,
+        'attendance_scanned',
         {
           user_id: String(userId),
           device_sn: sn,
@@ -285,10 +233,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           scanned_at: scannedAt,
         },
       );
-
-      // route.webhook is available here if you need to fire an outbound
-      // webhook per scan in addition to the socket room broadcast — not
-      // wired up yet since I don't know your webhook call convention.
     }
 
     // Ack with the real count so the device clears its send buffer and

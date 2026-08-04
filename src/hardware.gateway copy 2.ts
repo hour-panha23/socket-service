@@ -17,7 +17,7 @@ interface DeviceRoute {
 }
 
 interface CacheEntry {
-  route: DeviceRoute | null;
+  route: DeviceRoute | null; // null = confirmed unregistered, still worth caching briefly
   expiresAt: number;
 }
 
@@ -28,8 +28,8 @@ const DEVICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — avoid hitting DB on ever
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private readonly lastScanAt = new Map<string, number>();
-  private readonly deviceCache = new Map<string, CacheEntry>();
+  private readonly lastScanAt = new Map<string, number>(); // `${sn}:${userId}` -> timestamp
+  private readonly deviceCache = new Map<string, CacheEntry>(); // normalized sn -> route
 
   constructor(
     private readonly notificationsService: NotificationsService,
@@ -49,16 +49,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const data = await this.devicesService.getProjectForDevice(sn);
-
-      this.logger.debug(
-        `getProjectForDevice(${sn}) raw response: ${JSON.stringify(data)}`,
-      );
+      const response = await this.devicesService.getProjectForDevice(sn);
+      const data = response?.data;
 
       if (!data) {
-        this.logger.warn(
-          `No device row found for sn=${sn} (normalized). Check that device_serial in DB matches exactly.`,
-        );
         this.deviceCache.set(sn, {
           route: null,
           expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
@@ -80,8 +74,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       });
       return route;
     } catch (err) {
-      // DB/network failure — don't cache this, so the next scan retries the lookup
-      // instead of getting stuck treating a temporary outage as "unregistered".
       this.logger.error(
         `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
       );

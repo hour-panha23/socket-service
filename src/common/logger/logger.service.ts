@@ -159,9 +159,9 @@ export class LoggerService {
   ): string[] {
     const levelFiles: Record<'error' | 'warn' | 'info' | 'debug', string[]> = {
       error: [`error.log`],
-      warn: [`warn.log`],
+      warn: [`info.log`],
       info: [`info.log`],
-      debug: [`debug.log`],
+      debug: [`info.log`],
     };
 
     const targets = [...levelFiles[level]];

@@ -75,14 +75,14 @@ export class NotificationsGateway
 
   afterInit(server: Namespace) {
     this.notificationsService.setServer(server);
-    // this.logger.debug('NotificationsGateway initialized');
+    this.logger.debug('NotificationsGateway initialized');
   }
 
   async handleConnection(client: TypedSocket) {
-    // this.logger.debug(`[WS Connect] New incoming connection attempt`, {
-    //   clientId: client.id,
-    //   transport: client.conn.transport.name,
-    // });
+    this.logger.debug(`[WS Connect] New incoming connection attempt`, {
+      clientId: client.id,
+      transport: client.conn.transport.name,
+    });
 
     const auth = (client.handshake.auth ?? {}) as Record<string, any>;
     const headers = (client.handshake.headers ?? {}) as Record<string, any>;
@@ -107,17 +107,17 @@ export class NotificationsGateway
       auth.signature || headers['x-signature'] || query.signature;
     const userId = auth.user_id || headers['x-user-id'] || query.user_id;
 
-    // this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
-    //   clientId: client.id,
-    //   proId,
-    //   timestamp,
-    //   signature: signature ? `${signature.slice(0, 8)}...` : undefined, // truncated for security
-    //   sources: {
-    //     authKeys: Object.keys(auth),
-    //     headerKeys: Object.keys(headers),
-    //     queryKeys: Object.keys(query),
-    //   },
-    // });
+    this.logger.debug(`[WS Auth Extraction] Extracted credentials`, {
+      clientId: client.id,
+      proId,
+      timestamp,
+      signature: signature ? `${signature.slice(0, 8)}...` : undefined, // truncated for security
+      sources: {
+        authKeys: Object.keys(auth),
+        headerKeys: Object.keys(headers),
+        queryKeys: Object.keys(query),
+      },
+    });
 
     // Step 1: Missing Credentials Check
     if (!proId || !timestamp || !signature) {
@@ -149,10 +149,10 @@ export class NotificationsGateway
     const adminSecretKey = this.configService.get<string>('ADMIN_SECRET_KEY');
 
     if (adminAppId && adminSecretKey && proId === '1') {
-      // this.logger.debug(`[WS Auth] Attempting admin authentication`, {
-      //   clientId: client.id,
-      //   adminAppId,
-      // });
+      this.logger.debug(`[WS Auth] Attempting admin authentication`, {
+        clientId: client.id,
+        adminAppId,
+      });
 
       const message = buildSignedMessage(proId, timestamp);
       const isValidAdmin = verifyHmacSignature(
@@ -178,20 +178,20 @@ export class NotificationsGateway
       };
       await client.join(`service:${proId}`);
 
-      // this.logger.debug(`[WS Auth Success] Admin app connected & joined room`, {
-      //   clientId: client.id,
-      //   room: `service:${proId}`,
-      // });
+      this.logger.debug(`[WS Auth Success] Admin app connected & joined room`, {
+        clientId: client.id,
+        room: `service:${proId}`,
+      });
 
       this.emitConnectEvent(client);
       return;
     }
 
-    // // Step 4: Standard App Auth Check
-    // this.logger.debug(`[WS Auth] Verifying standard app signature`, {
-    //   clientId: client.id,
-    //   proId,
-    // });
+    // Step 4: Standard App Auth Check
+    this.logger.debug(`[WS Auth] Verifying standard app signature`, {
+      clientId: client.id,
+      proId,
+    });
 
     const startTime = Date.now();
 
@@ -223,13 +223,13 @@ export class NotificationsGateway
       // only join the private user room if this connection actually verified as user-scoped
       if (proId && userId) {
         await client.join(`user:${proId}:${userId}`);
-        // this.logger.debug(
-        //   `Socket ${client.id} auto-joined verified user channel`,
-        //   {
-        //     proId,
-        //     userId,
-        //   },
-        // );
+        this.logger.debug(
+          `Socket ${client.id} auto-joined verified user channel`,
+          {
+            proId,
+            userId,
+          },
+        );
       }
 
       this.emitConnectEvent(client);
@@ -249,7 +249,7 @@ export class NotificationsGateway
   }
 
   handleDisconnect(client: TypedSocket) {
-    // this.logger.debug(`Client disconnected: ${client.id}`);
+    this.logger.debug(`Client disconnected: ${client.id}`);
     this.server.to('admin:monitor').emit('admin:client_event', {
       type: 'disconnect',
       clientId: client.id,
@@ -279,11 +279,11 @@ export class NotificationsGateway
 
     await client.join([projectRoom, appRoom, specificRoom]);
 
-    // this.logger.debug(`Socket ${client.id} joined hierarchical rooms`, {
-    //   clientId: client.id,
-    //   rooms: [projectRoom, appRoom, specificRoom],
-    //   dto: data,
-    // });
+    this.logger.debug(`Socket ${client.id} joined hierarchical rooms`, {
+      clientId: client.id,
+      rooms: [projectRoom, appRoom, specificRoom],
+      dto: data,
+    });
 
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'join',
@@ -305,7 +305,7 @@ export class NotificationsGateway
     const specificRoom = `project:${data.projectId}:app:${data.appId}:room:${data.roomId}`;
     await client.leave(specificRoom);
 
-    // this.logger.debug(`Socket ${client.id} left room ${specificRoom}`);
+    this.logger.debug(`Socket ${client.id} left room ${specificRoom}`);
 
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'leave',
@@ -328,22 +328,20 @@ export class NotificationsGateway
     @MessageBody() data: { userId: string },
   ) {
     await client.join(`user:${data.userId}`);
-    // this.logger.debug(`Socket ${client.id} joined user channel`, {
-    //   userId: data.userId,
-    // });
+    this.logger.debug(`Socket ${client.id} joined user channel`, {
+      userId: data.userId,
+    });
     return {
       event: 'user_channel_joined',
       data: { status: 'success', userId: data.userId },
     };
   }
 
-  // TODO: once app roles exist, gate this to isAdmin apps only —
-  // right now any authenticated app can see every emitted payload.
   @UseGuards(WsAppAuthGuard)
   @SubscribeMessage('admin:subscribe')
   async handleAdminSubscribe(@ConnectedSocket() client: TypedSocket) {
     await client.join('admin:monitor');
-    // this.logger.debug(`Client ${client.id} subscribed to admin monitor`);
+    this.logger.debug(`Client ${client.id} subscribed to admin monitor`);
     return { event: 'admin:subscribed', data: { status: 'ok' } };
   }
 

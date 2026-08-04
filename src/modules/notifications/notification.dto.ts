@@ -1,4 +1,4 @@
-import { Obj, Str } from '@/common/decorator/field.decorator';
+import { Json, Obj, Str } from '@/common/decorator/field.decorator';
 
 export class EmitToProjectDto {
   @Str() project_id!: string;
@@ -39,12 +39,12 @@ export class EmitBroadcastDto {
 }
 
 export class EmitMessageDto {
-  @Str(true) user_id?: string;
+  @Str() event!: string;
+  @Json() payload!: Record<string, unknown>;
   @Str(true) project_id!: string;
   @Str(true) app_id!: string;
+  @Str(true) user_id?: string;
   @Str(true) room!: string;
-  @Str() event!: string;
-  @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
 }
 

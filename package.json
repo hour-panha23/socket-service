@@ -14,6 +14,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "clear-logs": "truncate -s 0 ./logs/*.log",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
@@ -21,7 +22,10 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "m:m": "knex migrate:make -x ts",
     "m:l": "knex migrate:latest",
-    "m:r": "knex migrate:rollback"
+    "m:r": "knex migrate:rollback",
+    "s:m": "knex seed:make -x ts",
+    "s:r": "knex seed:run",
+    "s:f": "knex seed:run --specific="
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",

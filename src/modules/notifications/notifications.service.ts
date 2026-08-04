@@ -59,9 +59,12 @@ export class NotificationsService {
     target: string,
     senderSocketId?: string,
   ): EmitResult {
-    // logger.debug(
-    //   `[emitAndTrack] Preparing to emit event "${prefixedEvent}" (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}]`,
-    // );
+    const totalConnectedClients = this.getConnectedClientCount();
+    const activeRoomStats = this.getRoomStats();
+
+    logger.debug(
+      `[emitAndTrack] Preparing to emit event (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}], payload: ${JSON.stringify(payload)}, senderSocketId: ${senderSocketId} | System State: Total Connected Clients: ${totalConnectedClients}, Active Rooms Count: ${activeRoomStats.length}`,
+    );
 
     const result: EmitResult = {
       event: rawEvent,
@@ -89,9 +92,9 @@ export class NotificationsService {
     this.logToAdmin(result, payload);
     void this.deliverWebhook(target, rawEvent, payload);
 
-    // logger.debug(
-    //   `[emitAndTrack] Successfully emitted "${prefixedEvent}" to room "${room}" (${result.recipientCount} recipients)`,
-    // );
+    logger.debug(
+      `[emitAndTrack] Emitted "${rawEvent}" to room "${room}" | Target Room Size: ${result.recipientCount} | Total System Clients: ${totalConnectedClients} | Active Rooms Snapshot: ${JSON.stringify(activeRoomStats)}`,
+    );
 
     return result;
   }
@@ -102,6 +105,8 @@ export class NotificationsService {
     payload: Record<string, unknown>,
     senderSocketId?: string,
   ): Promise<EmitResult> {
+    logger.info('Emit to User');
+
     // no appId at project scope — projectId is the widest owning identifier available
     return this.emitAndTrack(
       `project:${projectId}`,
@@ -120,6 +125,8 @@ export class NotificationsService {
     payload: Record<string, unknown>,
     senderSocketId?: string,
   ): Promise<EmitResult> {
+    logger.info('Emit to User');
+
     return this.emitAndTrack(
       `project:${projectId}:app:${appId}`,
       event,
@@ -156,6 +163,8 @@ export class NotificationsService {
     payload: Record<string, unknown>,
     senderSocketId?: string,
   ): Promise<EmitResult> {
+    logger.info('Emit to User');
+
     return this.emitAndTrack(
       `user:${projectId}:${appId}:${userId}`,
       event,
@@ -171,6 +180,8 @@ export class NotificationsService {
     payload: Record<string, unknown>,
     senderSocketId?: string,
   ): Promise<EmitResult> {
+    logger.info('Emit to User');
+
     const result: EmitResult = {
       event: 'notification',
       rawEvent: event,
@@ -200,6 +211,8 @@ export class NotificationsService {
       payload,
       sender_socket_id,
     } = body;
+
+    logger.info('[Send Message] with body', body);
 
     // Target User
     if (user_id && app_id && project_id) {
