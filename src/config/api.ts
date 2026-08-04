@@ -32,4 +32,14 @@ export const API_ENDPOINTS = {
       return buildApiUrl(`projects/delete/${id}`);
     },
   },
+  device: {
+    listDevices: buildApiUrl("devices/list"),
+    createDevice: buildApiUrl("devices/create"),
+    updateDevice(id: string): string {
+      return buildApiUrl(`devices/update/${id}`);
+    },
+    deleteDevice(id: string): string {
+      return buildApiUrl(`devices/delete/${id}`);
+    },
+  },
 } as const;

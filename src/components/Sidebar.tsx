@@ -5,13 +5,14 @@ import {
   ChevronLeft,
   ChevronRight,
   KeyRound,
+  Scan,
   Zap,
 } from "lucide-react";
 import React, { useState } from "react";
 
 interface SidebarProps {
-  activeTab: "monitoring" | "project";
-  setActiveTab: (tab: "monitoring" | "project") => void;
+  activeTab: "monitoring" | "project" | "device";
+  setActiveTab: (tab: "monitoring" | "project" | "device") => void;
   isConnected: boolean;
 }
 
@@ -93,6 +94,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <KeyRound className="w-4 h-4 shrink-0" />
             {!isCollapsed && (
               <span className="whitespace-nowrap">Project Management</span>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab("device")}
+            className={`${
+              activeTab === "device" ? activeClass : inactiveClass
+            } ${isCollapsed ? "justify-center px-0" : ""}`}
+            title="Device Management"
+          >
+            <Scan className="w-4 h-4 shrink-0" />
+            {!isCollapsed && (
+              <span className="whitespace-nowrap">Device Management</span>
             )}
           </button>
         </nav>

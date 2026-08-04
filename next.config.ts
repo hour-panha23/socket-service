@@ -2,7 +2,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["https://decorated-unzip-outer.ngrok-free.de"],
+  allowedDevOrigins: [
+    "https://decorated-unzip-outer.ngrok-free.de",
+    "192.9.31.22",
+    "192.9.31.18",
+    "172.25.112.1",
+  ],
   typescript: {
     ignoreBuildErrors: true,
   },
