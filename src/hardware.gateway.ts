@@ -17,7 +17,7 @@ interface DeviceRoute {
 }
 
 interface CacheEntry {
-  route: DeviceRoute | null;
+  route: DeviceRoute | null; // null = confirmed unregistered, still worth caching briefly
   expiresAt: number;
 }
 
@@ -28,66 +28,13 @@ const DEVICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — avoid hitting DB on ever
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private readonly lastScanAt = new Map<string, number>();
-  private readonly deviceCache = new Map<string, CacheEntry>();
+  private readonly lastScanAt = new Map<string, number>(); // `${sn}:${userId}` -> timestamp
+  private readonly deviceCache = new Map<string, CacheEntry>(); // normalized sn -> route
 
   constructor(
     private readonly notificationsService: NotificationsService,
     private readonly devicesService: DeviceService,
   ) {}
-
-  /** Device serials are inconsistent in casing across firmware vs DB — normalize once, everywhere. */
-  private normalizeSn(sn: string): string {
-    return String(sn ?? '').toLowerCase();
-  }
-
-  private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
-    const sn = this.normalizeSn(rawSn);
-    const cached = this.deviceCache.get(sn);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.route;
-    }
-
-    try {
-      const data = await this.devicesService.getProjectForDevice(sn);
-
-      this.logger.debug(
-        `getProjectForDevice(${sn}) raw response: ${JSON.stringify(data)}`,
-      );
-
-      if (!data) {
-        this.logger.warn(
-          `No device row found for sn=${sn} (normalized). Check that device_serial in DB matches exactly.`,
-        );
-        this.deviceCache.set(sn, {
-          route: null,
-          expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-        });
-        return null;
-      }
-
-      const route: DeviceRoute = {
-        projectId: data.project_id,
-        appId: data.app_id,
-        roomId: data.room,
-        event: data.event,
-        webhook: data.webhook,
-      };
-
-      this.deviceCache.set(sn, {
-        route,
-        expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-      });
-      return route;
-    } catch (err) {
-      // DB/network failure — don't cache this, so the next scan retries the lookup
-      // instead of getting stuck treating a temporary outage as "unregistered".
-      this.logger.error(
-        `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
-      );
-      return null;
-    }
-  }
 
   onModuleInit() {
     this.wss = new WebSocketServer({
@@ -102,15 +49,13 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
 
     this.logger.log(
-      'AI20/AI21 Hardware WebSocket Server initialized on port 8088 (/pub/chat)',
+      'AiFace Hardware WebSocket Server initialized on port 8088 (/pub/chat)',
     );
 
     this.wss.on('connection', (ws: WebSocket, req) => {
       const remoteAddr = req.socket.remoteAddress;
       this.logger.log(`Hardware terminal connected from ${remoteAddr}`);
 
-      // Same reasoning as above, but per-connection. A malformed frame or a
-      // reset connection without this listener crashes the process.
       ws.on('error', (err) => {
         this.logger.error(`Socket error from ${remoteAddr}: ${err.message}`);
       });
@@ -123,27 +68,24 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           this.logger.warn(
             `Malformed JSON from ${remoteAddr}: ${(err as Error).message}`,
           );
-          // Let the device know so it retries instead of hanging silently.
           this.safeSend(ws, {
             ret: 'error',
             result: false,
-            reason: 'invalid_json',
+            reason: 'Invalid data received',
           });
           return;
         }
 
         try {
           this.logger.debug(
-            `[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
+            `\n\n\n\n[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
           );
 
-          // 1. Device registration / heartbeat
           if (payload.cmd === 'reg') {
             await this.handleRegistration(ws, payload);
             return;
           }
 
-          // 2. Attendance / face scan logs
           if (
             payload.cmd === 'sendlog' ||
             payload.cmd === 'sendrtlog' ||
@@ -154,9 +96,8 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          // 3. Photo/image push (AI20/AI21 sends these separately when
-          //    nosendimage=false). Not persisted yet — flagging so it's not
-          //    silently dropped like before.
+          // Photo/image push (sent separately when nosendimage=false).
+          // Not persisted yet — flagging so it's not silently dropped.
           if (payload.cmd === 'sendimage' || payload.cmd === 'senduserpic') {
             this.logger.debug(
               `Image payload received from sn=${payload.sn}, not yet handled`,
@@ -183,18 +124,66 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  /** Device serials are inconsistent in casing across firmware vs DB — normalize once, everywhere. */
+  private normalizeSn(sn: string): string {
+    return String(sn ?? '').toLowerCase();
+  }
+
+  private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
+    const sn = this.normalizeSn(rawSn);
+    const cached = this.deviceCache.get(sn);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.route;
+    }
+
+    try {
+      const data = await this.devicesService.getProjectForDevice(sn);
+
+      if (!data) {
+        this.deviceCache.set(sn, {
+          route: null,
+          expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
+        });
+        return null;
+      }
+
+      const route: DeviceRoute = {
+        projectId: data.project_id,
+        appId: data.app_id,
+        roomId: data.room,
+        event: data.event,
+        webhook: data.webhook,
+      };
+
+      this.deviceCache.set(sn, {
+        route,
+        expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
+      });
+      return route;
+    } catch (err) {
+      // DB/network failure — don't cache this, so the next attempt retries
+      // the lookup instead of treating a temporary outage as "unregistered".
+      this.logger.error(
+        `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
+      );
+      return null;
+    }
+  }
+
   private async handleRegistration(ws: WebSocket, payload: any) {
     const sn = payload.sn;
     const route = await this.resolveDeviceRoute(sn);
 
     if (!route) {
-      // Reject unknown devices instead of letting them push data into a
-      // default/fallback room.
       this.logger.warn(`Registration rejected: unknown device sn=${sn}`);
+      // Per protocol doc 2.2: every response (success or failure) echoes `sn`.
+      // We were omitting it — device may rely on it to attribute the
+      // response to itself, especially if it ever holds multiple sockets.
       this.safeSend(ws, {
         ret: 'reg',
+        sn,
         result: false,
-        reason: 'unregistered_device',
+        reason: 'Access Denied',
       });
       return;
     }
@@ -205,9 +194,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
     this.safeSend(ws, {
       ret: 'reg',
+      sn,
       result: true,
       tryseconds: 60,
-      cloudtime: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      cloudtime: this.nowFormatted(),
       nosenduser: false,
       nosendlog: false,
       nosendimage: false,
@@ -219,11 +209,12 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     const route = await this.resolveDeviceRoute(sn);
 
     if (!route) {
-      this.logger.warn(`Scan log rejected: unregistered device sn=${sn}`);
+      this.logger.warn(`\n\nScan log rejected: unregistered device sn=${sn}`);
       this.safeSend(ws, {
         ret: payload.cmd,
+        sn,
         result: false,
-        reason: 'unregistered_device',
+        reason: 'Access Denied',
       });
       return;
     }
@@ -235,15 +226,23 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
     if (records.length === 0) {
       this.logger.warn(
-        `Scan log from sn=${sn} has no records, dropping. Raw payload: ${JSON.stringify(payload)}`,
+        `\n\nScan log from sn=${sn} has no records, dropping. Raw payload: ${JSON.stringify(payload)}`,
       );
       this.safeSend(ws, {
         ret: payload.cmd,
         result: false,
-        reason: 'empty_record',
+        reason: 'No scan data received',
       });
       return;
     }
+
+    // Per protocol: sendlog's success response carries a single top-level
+    // `access` flag (1 = door/access allowed, 0 = denied) alongside
+    // result:true — denial is NOT a transport failure, so it must not be
+    // result:false. Sending result:false here makes the device treat the
+    // push as failed and retry the same scan indefinitely.
+    let access: 0 | 1 = 1;
+    let accessReason: string | null = null;
 
     for (const record of records) {
       const userId =
@@ -251,7 +250,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
       if (userId === undefined || userId === null) {
         this.logger.warn(
-          `Record missing enrollid from sn=${sn}, skipping. Raw record: ${JSON.stringify(record)}`,
+          `\n\nRecord missing enrollid from sn=${sn}, skipping. Raw record: ${JSON.stringify(record)}`,
         );
         continue;
       }
@@ -267,10 +266,30 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       }
       this.lastScanAt.set(dedupeKey, now);
 
+      // TEMP TEST HOOK — set TEST_DENY_ENROLLID env var to a specific
+      // enrollid to simulate access denied for that user. Remove once
+      // you've confirmed the device renders `reason`/`access` correctly.
+      const isTestDenied =
+        process.env.TEST_DENY_ENROLLID &&
+        String(userId) === process.env.TEST_DENY_ENROLLID;
+
+      if (isTestDenied) {
+        this.logger.warn(
+          `[TEST] Simulating access denied for user=${userId} sn=${sn}`,
+        );
+        access = 0;
+        accessReason = 'Access Denied';
+        continue; // don't broadcast a denied scan to notificationsService
+      }
+
       const scannedAt = record.time || new Date().toISOString();
+      const [current_date, present_time] = this.splitDateTime(scannedAt);
+      const verifyMode = record.mode; // meaning unconfirmed — pending Appendix B/C from the protocol doc
+      const direction = record.inout; // confirmed: 0=in, 1=out
+      const status = direction === 1 ? 'CHECK_OUT' : 'CHECK_IN';
 
       this.logger.log(
-        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} at ${scannedAt}`,
+        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} status ${status} on ${current_date} at ${present_time}`,
       );
 
       await this.notificationsService.sendToRoom(
@@ -281,29 +300,46 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         {
           user_id: String(userId),
           device_sn: sn,
-          status: 'PRESENT',
-          scanned_at: scannedAt,
+          status,
+          verify_mode: verifyMode,
+          current_date,
+          present_time,
         },
       );
-
-      // route.webhook is available here if you need to fire an outbound
-      // webhook per scan in addition to the socket room broadcast — not
-      // wired up yet since I don't know your webhook call convention.
     }
 
-    // Ack with the real count so the device clears its send buffer and
-    // stops retrying this batch. Every prior response was result:false,
-    // which is almost certainly why the same record got resent repeatedly.
     this.safeSend(ws, {
       ret: payload.cmd,
+      sn,
       result: true,
       count: records.length,
+      logindex: payload.logindex ?? 0,
+      cloudtime: this.nowFormatted(),
+      access,
+      ...(accessReason ? { reason: accessReason, msg: accessReason } : {}),
     });
+  }
+
+  private nowFormatted(): string {
+    return new Date().toISOString().replace('T', ' ').substring(0, 19);
+  }
+
+  /**
+   * Splits a datetime string into [date, time].
+   * Handles both the device's native format ("2026-08-04 02:59:45")
+   * and the ISO fallback used when record.time is missing ("2026-08-04T02:59:45.123Z").
+   */
+  private splitDateTime(value: string): [string, string] {
+    const normalized = value.replace('T', ' ').replace('Z', '');
+    const [date, time = ''] = normalized.split(' ');
+    return [date, time.split('.')[0]]; // strip milliseconds if present
   }
 
   private safeSend(ws: WebSocket, data: unknown) {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(data));
+      const raw = JSON.stringify(data);
+      this.logger.debug(`[send] ${raw}`);
+      ws.send(raw);
     }
   }
 
