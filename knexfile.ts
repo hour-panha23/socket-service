@@ -40,12 +40,12 @@ export const development = {
     ssl: getSslConfig(), // <--- FIX: Explicitly disable SSL for local development
   },
   migrations: {
-    directory: './src/database/migrations',
+    directory: './database/migrations',
     loadExtensions: ['.ts'],
     extension: 'ts',
   },
   seeds: {
-    directory: './src/database/seeds',
+    directory: './database/seeds',
     loadExtensions: ['.ts'],
     extension: 'ts',
   },
@@ -75,12 +75,12 @@ export const users = {
     ssl: getSslConfig(), // <--- FIX: Explicitly disable SSL for local development
   },
   migrations: {
-    directory: './src/database/migrations/users',
+    directory: './database/migrations/users',
     loadExtensions: ['.ts'],
     extension: 'ts',
   },
   seeds: {
-    directory: './src/database/seeds',
+    directory: './database/seeds',
     loadExtensions: ['.ts'],
     extension: 'ts',
   },
