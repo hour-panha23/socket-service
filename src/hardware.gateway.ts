@@ -432,8 +432,8 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       // Payload expected by Laravel
       const requestBody = {
         current_date: currentDate,
-        present_time: presentTime,
-        // present_time: "07:15",
+        // present_time: presentTime,
+        present_time: "07:15",
         user_id: String(userId),
         user_name: userName,
       };
