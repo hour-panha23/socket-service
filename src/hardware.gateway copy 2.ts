@@ -7,7 +7,7 @@ import {
 import { WebSocket, WebSocketServer } from 'ws';
 import { DeviceService } from './modules/device/device.service';
 import { NotificationsService } from './modules/notifications/notifications.service';
-
+import { RedisService } from './services/redis/redis.service';
 interface DeviceRoute {
   projectId: string;
   appId: string;
@@ -16,25 +16,18 @@ interface DeviceRoute {
   webhook?: string;
 }
 
-interface CacheEntry {
-  route: DeviceRoute | null; // null = confirmed unregistered, still worth caching briefly
-  expiresAt: number;
-}
-
-const DUPLICATE_SCAN_WINDOW_MS = 3000; // debounce same user/device double-taps
-// const DEVICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — avoid hitting DB on every scan
-const DEVICE_CACHE_TTL_MS = 0; // 5 min — avoid hitting DB on every scan
+const DUPLICATE_SCAN_WINDOW_SEC = 3; // 3 seconds deduplication window
+const DEVICE_CACHE_TTL_SEC = 5 * 60; // 5 minutes cache for database routes
 
 @Injectable()
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private readonly lastScanAt = new Map<string, number>(); // `${sn}:${userId}` -> timestamp
-  private readonly deviceCache = new Map<string, CacheEntry>(); // normalized sn -> route
 
   constructor(
     private readonly notificationsService: NotificationsService,
     private readonly devicesService: DeviceService,
+    private readonly redisService: RedisService,
   ) {}
 
   onModuleInit() {
@@ -43,8 +36,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       path: '/pub/chat',
     });
 
-    // Without this, an error on the server itself (e.g. EADDRINUSE) throws
-    // an unhandled 'error' event and takes down the whole Nest process.
     this.wss.on('error', (err) => {
       this.logger.error(`WebSocketServer error: ${err.message}`, err.stack);
     });
@@ -97,8 +88,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          // Photo/image push (sent separately when nosendimage=false).
-          // Not persisted yet — flagging so it's not silently dropped.
           if (payload.cmd === 'sendimage' || payload.cmd === 'senduserpic') {
             this.logger.debug(
               `Image payload received from sn=${payload.sn}, not yet handled`,
@@ -107,7 +96,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          // Fallback generic ack so the device doesn't retry forever
           if (payload.cmd) {
             this.safeSend(ws, { ret: payload.cmd, result: true });
           }
@@ -125,26 +113,27 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Device serials are inconsistent in casing across firmware vs DB — normalize once, everywhere. */
   private normalizeSn(sn: string): string {
     return String(sn ?? '').toLowerCase();
   }
 
   private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
     const sn = this.normalizeSn(rawSn);
-    const cached = this.deviceCache.get(sn);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.route;
+    const cacheKey = `device:route:${sn}`;
+
+    // Try reading from Upstash Redis Cache
+    const cachedRoute = await this.redisService.get<DeviceRoute>(cacheKey);
+    if (cachedRoute) {
+      return cachedRoute;
     }
 
     try {
+      // Query Database via DevicesService
       const data = await this.devicesService.getProjectForDevice(sn);
 
       if (!data) {
-        this.deviceCache.set(sn, {
-          route: null,
-          expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-        });
+        // Cache null briefly (e.g., 60 seconds) to prevent DB slamming on invalid SNs
+        await this.redisService.set(cacheKey, null, 60);
         return null;
       }
 
@@ -156,14 +145,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         webhook: data.webhook,
       };
 
-      this.deviceCache.set(sn, {
-        route,
-        expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-      });
+      // Store valid route in Redis with 5-minute TTL
+      await this.redisService.set(cacheKey, route, DEVICE_CACHE_TTL_SEC);
       return route;
     } catch (err) {
-      // DB/network failure — don't cache this, so the next attempt retries
-      // the lookup instead of treating a temporary outage as "unregistered".
       this.logger.error(
         `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
       );
@@ -177,9 +162,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
     if (!route) {
       this.logger.warn(`Registration rejected: unknown device sn=${sn}`);
-      // Per protocol doc 2.2: every response (success or failure) echoes `sn`.
-      // We were omitting it — device may rely on it to attribute the
-      // response to itself, especially if it ever holds multiple sockets.
       this.safeSend(ws, {
         ret: 'reg',
         sn,
@@ -205,12 +187,122 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // private async handleScanLog(ws: WebSocket, payload: any) {
+  //   const sn = payload.sn;
+  //   const route = await this.resolveDeviceRoute(sn);
+
+  //   if (!route) {
+  //     this.logger.warn(`\n\nScan log rejected: unregistered device sn=${sn}`);
+  //     this.safeSend(ws, {
+  //       ret: payload.cmd,
+  //       sn,
+  //       result: false,
+  //       reason: 'Access Denied',
+  //     });
+  //     return;
+  //   }
+
+  //   const records: any[] = Array.isArray(payload.record) ? payload.record : [];
+
+  //   if (records.length === 0) {
+  //     this.logger.warn(
+  //       `\n\nScan log from sn=${sn} has no records, dropping. Raw payload: ${JSON.stringify(payload)}`,
+  //     );
+  //     this.safeSend(ws, {
+  //       ret: payload.cmd,
+  //       result: false,
+  //       reason: 'No scan data received',
+  //     });
+  //     return;
+  //   }
+
+  //   let access: 0 | 1 = 1;
+  //   let accessReason: string | null = null;
+
+  //   for (const record of records) {
+  //     const userId =
+  //       record.enrollid ?? record.userId ?? record.personId ?? record.customId;
+
+  //     if (userId === undefined || userId === null) {
+  //       this.logger.warn(
+  //         `\n\nRecord missing enrollid from sn=${sn}, skipping. Raw record: ${JSON.stringify(record)}`,
+  //       );
+  //       continue;
+  //     }
+
+  //     // -------------------------------------------------------------------
+  //     // Redis Deduplication Check (NX = Set if Not Exists)
+  //     // -------------------------------------------------------------------
+  //     const dedupeKey = `scan:dedupe:${sn}:${userId}`;
+  //     const isDuplicate = await this.redisService
+  //       .getClient()
+  //       .set(dedupeKey, '1', { ex: DUPLICATE_SCAN_WINDOW_SEC, nx: true });
+
+  //     // If set() returns null, the key already existed within the window
+  //     if (!isDuplicate) {
+  //       this.logger.debug(`Duplicate scan suppressed for ${sn}:${userId}`);
+  //       continue;
+  //     }
+
+  //     const isTestDenied =
+  //       process.env.TEST_DENY_ENROLLID &&
+  //       String(userId) === process.env.TEST_DENY_ENROLLID;
+
+  //     if (isTestDenied) {
+  //       this.logger.warn(
+  //         `[TEST] Simulating access denied for user=${userId} sn=${sn}`,
+  //       );
+  //       access = 0;
+  //       accessReason = 'Access Denied';
+  //       continue;
+  //     }
+
+  //     const scannedAt = record.time || new Date().toISOString();
+  //     const [current_date, present_time] = this.splitDateTime(scannedAt);
+  //     const verifyMode = record.mode;
+  //     const direction = record.inout;
+  //     const status = direction === 1 ? 'CHECK_OUT' : 'CHECK_IN';
+
+  //     this.logger.log(
+  //       `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} status ${status} on ${current_date} at ${present_time}`,
+  //     );
+
+  //     await this.notificationsService.sendToRoom(
+  //       route.projectId,
+  //       route.appId,
+  //       route.roomId,
+  //       route.event,
+  //       {
+  //         user_id: String(userId),
+  //         device_sn: sn,
+  //         status,
+  //         verify_mode: verifyMode,
+  //         current_date,
+  //         present_time,
+  //       },
+  //     );
+  //   }
+
+  //   this.safeSend(ws, {
+  //     ret: payload.cmd,
+  //     sn,
+  //     result: true,
+  //     count: records.length,
+  //     logindex: payload.logindex ?? 0,
+  //     cloudtime: this.nowFormatted(),
+  //     access,
+  //     ...(accessReason ? { reason: accessReason, msg: accessReason } : {}),
+  //   });
+  // }
+
   private async handleScanLog(ws: WebSocket, payload: any) {
     const sn = payload.sn;
+
+    // Resolve Device Route (Cached in Upstash Redis for 5 minutes)
     const route = await this.resolveDeviceRoute(sn);
 
     if (!route) {
-      this.logger.warn(`\n\nScan log rejected: unregistered device sn=${sn}`);
+      this.logger.warn(`Scan log rejected: unregistered device sn=${sn}`);
       this.safeSend(ws, {
         ret: payload.cmd,
         sn,
@@ -220,15 +312,8 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // This firmware batches scan events inside a `record` array rather than
-    // putting enrollid/time at the top level, e.g.:
-    // { cmd:'sendlog', sn, count:1, logindex:0, record:[{enrollid:2, time:'...', mode:3, inout:1, event:0}] }
     const records: any[] = Array.isArray(payload.record) ? payload.record : [];
-
     if (records.length === 0) {
-      this.logger.warn(
-        `\n\nScan log from sn=${sn} has no records, dropping. Raw payload: ${JSON.stringify(payload)}`,
-      );
       this.safeSend(ws, {
         ret: payload.cmd,
         result: false,
@@ -237,62 +322,40 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Per protocol: sendlog's success response carries a single top-level
-    // `access` flag (1 = door/access allowed, 0 = denied) alongside
-    // result:true — denial is NOT a transport failure, so it must not be
-    // result:false. Sending result:false here makes the device treat the
-    // push as failed and retry the same scan indefinitely.
     let access: 0 | 1 = 1;
     let accessReason: string | null = null;
 
+    // Process each scan record in the hardware batch
     for (const record of records) {
       const userId =
         record.enrollid ?? record.userId ?? record.personId ?? record.customId;
 
-      if (userId === undefined || userId === null) {
-        this.logger.warn(
-          `\n\nRecord missing enrollid from sn=${sn}, skipping. Raw record: ${JSON.stringify(record)}`,
-        );
+      if (userId === undefined || userId === null) continue;
+
+      // -------------------------------------------------------------------
+      // REDIS ATOMIC DEDUPLICATION LOCK
+      // Key: scan:dedupe:<sn>:<userId>
+      // ex: 3 -> Key automatically deletes after 3 seconds
+      // nx: true -> Only set if key DOES NOT exist
+      // -------------------------------------------------------------------
+      const dedupeKey = `scan:dedupe:${sn}:${userId}`;
+
+      const isSetSuccess = await this.redisService
+        .getClient()
+        .set(dedupeKey, '1', { ex: DUPLICATE_SCAN_WINDOW_SEC, nx: true });
+
+      // If isSetSuccess === null, key already existed within 3 sec (suppress duplicate)
+      if (!isSetSuccess) {
+        this.logger.debug(`Duplicate scan suppressed for ${sn}:${userId}`);
         continue;
       }
 
-      // Debounce: ignore the same user re-scanning within the window
-      // (double taps, retries from flaky hardware, etc.)
-      const dedupeKey = `${sn}:${userId}`;
-      const now = Date.now();
-      const lastAt = this.lastScanAt.get(dedupeKey);
-      if (lastAt && now - lastAt < DUPLICATE_SCAN_WINDOW_MS) {
-        this.logger.debug(`Duplicate scan suppressed for ${dedupeKey}`);
-        continue;
-      }
-      this.lastScanAt.set(dedupeKey, now);
-
-      // TEMP TEST HOOK — set TEST_DENY_ENROLLID env var to a specific
-      // enrollid to simulate access denied for that user. Remove once
-      // you've confirmed the device renders `reason`/`access` correctly.
-      const isTestDenied =
-        process.env.TEST_DENY_ENROLLID &&
-        String(userId) === process.env.TEST_DENY_ENROLLID;
-
-      if (isTestDenied) {
-        this.logger.warn(
-          `[TEST] Simulating access denied for user=${userId} sn=${sn}`,
-        );
-        access = 0;
-        accessReason = 'Access Denied';
-        continue; // don't broadcast a denied scan to notificationsService
-      }
-
+      // 3. Extract time, mode, and direction (0 = CHECK_IN, 1 = CHECK_OUT)
       const scannedAt = record.time || new Date().toISOString();
       const [current_date, present_time] = this.splitDateTime(scannedAt);
-      const verifyMode = record.mode; // meaning unconfirmed — pending Appendix B/C from the protocol doc
-      const direction = record.inout; // confirmed: 0=in, 1=out
-      const status = direction === 1 ? 'CHECK_OUT' : 'CHECK_IN';
+      const status = record.inout === 1 ? 'CHECK_OUT' : 'CHECK_IN';
 
-      this.logger.log(
-        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} status ${status} on ${current_date} at ${present_time}`,
-      );
-
+      // 4. Send clean event payload to room subscribers
       await this.notificationsService.sendToRoom(
         route.projectId,
         route.appId,
@@ -302,13 +365,14 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           user_id: String(userId),
           device_sn: sn,
           status,
-          verify_mode: verifyMode,
+          verify_mode: record.mode,
           current_date,
           present_time,
         },
       );
     }
 
+    // 5. Respond back to Hardware Terminal to ACK receipt
     this.safeSend(ws, {
       ret: payload.cmd,
       sn,
@@ -325,15 +389,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     return new Date().toISOString().replace('T', ' ').substring(0, 19);
   }
 
-  /**
-   * Splits a datetime string into [date, time].
-   * Handles both the device's native format ("2026-08-04 02:59:45")
-   * and the ISO fallback used when record.time is missing ("2026-08-04T02:59:45.123Z").
-   */
   private splitDateTime(value: string): [string, string] {
     const normalized = value.replace('T', ' ').replace('Z', '');
     const [date, time = ''] = normalized.split(' ');
-    return [date, time.split('.')[0]]; // strip milliseconds if present
+    return [date, time.split('.')[0]];
   }
 
   private safeSend(ws: WebSocket, data: unknown) {
@@ -345,7 +404,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
-    this.lastScanAt.clear();
     if (this.wss) {
       this.wss.close();
     }

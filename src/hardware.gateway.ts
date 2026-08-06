@@ -1,12 +1,15 @@
+import { HttpService } from '@nestjs/axios';
 import {
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { firstValueFrom } from 'rxjs';
 import { WebSocket, WebSocketServer } from 'ws';
-import { DeviceService } from './modules/device/device.service';
-import { NotificationsService } from './modules/notifications/notifications.service';
+import { DeviceService } from './modules/device/device.service'; // Adjust path if needed[cite: 1]
+import { NotificationsService } from './modules/notifications/notifications.service'; // Adjust path if needed[cite: 1]
+import { RedisService } from './services/redis/redis.service';
 
 interface DeviceRoute {
   projectId: string;
@@ -14,26 +17,21 @@ interface DeviceRoute {
   roomId: string;
   event: string;
   webhook?: string;
+  isBlocked?: boolean;
 }
 
-interface CacheEntry {
-  route: DeviceRoute | null; // null = confirmed unregistered, still worth caching briefly
-  expiresAt: number;
-}
-
-const DUPLICATE_SCAN_WINDOW_MS = 3000; // debounce same user/device double-taps
-const DEVICE_CACHE_TTL_MS = 5 * 60 * 1000; // 5 min — avoid hitting DB on every scan
+const DUPLICATE_SCAN_WINDOW_SEC = 3; // 3 seconds deduplication window
 
 @Injectable()
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private readonly lastScanAt = new Map<string, number>(); // `${sn}:${userId}` -> timestamp
-  private readonly deviceCache = new Map<string, CacheEntry>(); // normalized sn -> route
 
   constructor(
     private readonly notificationsService: NotificationsService,
     private readonly devicesService: DeviceService,
+    private readonly redisService: RedisService,
+    private readonly httpService: HttpService,
   ) {}
 
   onModuleInit() {
@@ -42,8 +40,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       path: '/pub/chat',
     });
 
-    // Without this, an error on the server itself (e.g. EADDRINUSE) throws
-    // an unhandled 'error' event and takes down the whole Nest process.
     this.wss.on('error', (err) => {
       this.logger.error(`WebSocketServer error: ${err.message}`, err.stack);
     });
@@ -78,7 +74,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
         try {
           this.logger.debug(
-            `\n\n\n\n[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
+            `\n\n\n\n\n\n[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
           );
 
           if (payload.cmd === 'reg') {
@@ -96,8 +92,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          // Photo/image push (sent separately when nosendimage=false).
-          // Not persisted yet — flagging so it's not silently dropped.
           if (payload.cmd === 'sendimage' || payload.cmd === 'senduserpic') {
             this.logger.debug(
               `Image payload received from sn=${payload.sn}, not yet handled`,
@@ -106,7 +100,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
             return;
           }
 
-          // Fallback generic ack so the device doesn't retry forever
           if (payload.cmd) {
             this.safeSend(ws, { ret: payload.cmd, result: true });
           }
@@ -124,28 +117,29 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  /** Device serials are inconsistent in casing across firmware vs DB — normalize once, everywhere. */
   private normalizeSn(sn: string): string {
     return String(sn ?? '').toLowerCase();
   }
 
+  /**
+   * Infinite Device Route Cache.
+   * Stored in Redis with no expiration (ttl = 0).
+   * Invalidate via: await redisService.del(`device:route:${sn}`) when updating device settings.
+   */
   private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
     const sn = this.normalizeSn(rawSn);
-    const cached = this.deviceCache.get(sn);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.route;
+    const cacheKey = `device:route:${sn}`;
+
+    // Check Redis Cache
+    const cachedRoute = await this.redisService.get<DeviceRoute>(cacheKey);
+    if (cachedRoute) {
+      return cachedRoute;
     }
 
+    // Query Database on Cache Miss
     try {
       const data = await this.devicesService.getProjectForDevice(sn);
-
-      if (!data) {
-        this.deviceCache.set(sn, {
-          route: null,
-          expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-        });
-        return null;
-      }
+      if (!data) return null;
 
       const route: DeviceRoute = {
         projectId: data.project_id,
@@ -153,16 +147,13 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         roomId: data.room,
         event: data.event,
         webhook: data.webhook,
+        isBlocked: data.is_blocked ?? false,
       };
 
-      this.deviceCache.set(sn, {
-        route,
-        expiresAt: Date.now() + DEVICE_CACHE_TTL_MS,
-      });
+      // Store infinitely in Redis (ttl = 0)
+      await this.redisService.set(cacheKey, route, 0);
       return route;
     } catch (err) {
-      // DB/network failure — don't cache this, so the next attempt retries
-      // the lookup instead of treating a temporary outage as "unregistered".
       this.logger.error(
         `Device lookup failed for sn=${sn}: ${(err as Error).message}`,
       );
@@ -174,11 +165,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     const sn = payload.sn;
     const route = await this.resolveDeviceRoute(sn);
 
-    if (!route) {
-      this.logger.warn(`Registration rejected: unknown device sn=${sn}`);
-      // Per protocol doc 2.2: every response (success or failure) echoes `sn`.
-      // We were omitting it — device may rely on it to attribute the
-      // response to itself, especially if it ever holds multiple sockets.
+    if (!route || route.isBlocked) {
+      this.logger.warn(
+        `Registration rejected: unknown or blocked device sn=${sn}`,
+      );
       this.safeSend(ws, {
         ret: 'reg',
         sn,
@@ -203,13 +193,14 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       nosendimage: false,
     });
   }
-
   private async handleScanLog(ws: WebSocket, payload: any) {
     const sn = payload.sn;
     const route = await this.resolveDeviceRoute(sn);
 
-    if (!route) {
-      this.logger.warn(`\n\nScan log rejected: unregistered device sn=${sn}`);
+    if (!route || route.isBlocked) {
+      this.logger.warn(
+        `Scan log rejected: unregistered or blocked device sn=${sn}`,
+      );
       this.safeSend(ws, {
         ret: payload.cmd,
         sn,
@@ -219,77 +210,116 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // This firmware batches scan events inside a `record` array rather than
-    // putting enrollid/time at the top level, e.g.:
-    // { cmd:'sendlog', sn, count:1, logindex:0, record:[{enrollid:2, time:'...', mode:3, inout:1, event:0}] }
     const records: any[] = Array.isArray(payload.record) ? payload.record : [];
+    if (records.length === 0) return;
 
-    if (records.length === 0) {
-      this.logger.warn(
-        `\n\nScan log from sn=${sn} has no records, dropping. Raw payload: ${JSON.stringify(payload)}`,
-      );
-      this.safeSend(ws, {
-        ret: payload.cmd,
-        result: false,
-        reason: 'No scan data received',
-      });
-      return;
-    }
-
-    // Per protocol: sendlog's success response carries a single top-level
-    // `access` flag (1 = door/access allowed, 0 = denied) alongside
-    // result:true — denial is NOT a transport failure, so it must not be
-    // result:false. Sending result:false here makes the device treat the
-    // push as failed and retry the same scan indefinitely.
     let access: 0 | 1 = 1;
     let accessReason: string | null = null;
 
     for (const record of records) {
       const userId =
         record.enrollid ?? record.userId ?? record.personId ?? record.customId;
+      if (userId === undefined || userId === null) continue;
 
-      if (userId === undefined || userId === null) {
-        this.logger.warn(
-          `\n\nRecord missing enrollid from sn=${sn}, skipping. Raw record: ${JSON.stringify(record)}`,
-        );
+      // 1. Redis Atomic Deduplication Lock
+      const dedupeKey = `scan:dedupe:${sn}:${userId}`;
+      const isNewScan = await this.redisService
+        .getClient()
+        .set(dedupeKey, '1', { ex: DUPLICATE_SCAN_WINDOW_SEC, nx: true });
+
+      if (!isNewScan) {
+        this.logger.debug(`Duplicate scan suppressed for ${sn}:${userId}`);
         continue;
       }
 
-      // Debounce: ignore the same user re-scanning within the window
-      // (double taps, retries from flaky hardware, etc.)
-      const dedupeKey = `${sn}:${userId}`;
-      const now = Date.now();
-      const lastAt = this.lastScanAt.get(dedupeKey);
-      if (lastAt && now - lastAt < DUPLICATE_SCAN_WINDOW_MS) {
-        this.logger.debug(`Duplicate scan suppressed for ${dedupeKey}`);
-        continue;
-      }
-      this.lastScanAt.set(dedupeKey, now);
+      // 2. Read User Cache from Redis
+      const normalizedSn = this.normalizeSn(sn);
+      const userKey = `device:user:${normalizedSn}:${userId}`;
 
-      // TEMP TEST HOOK — set TEST_DENY_ENROLLID env var to a specific
-      // enrollid to simulate access denied for that user. Remove once
-      // you've confirmed the device renders `reason`/`access` correctly.
-      const isTestDenied =
-        process.env.TEST_DENY_ENROLLID &&
-        String(userId) === process.env.TEST_DENY_ENROLLID;
+      let userCache = await this.redisService.getClient().get<{
+        user_id: number;
+        name: string;
+        access: number;
+        reason?: string;
+      }>(userKey);
 
-      if (isTestDenied) {
-        this.logger.warn(
-          `[TEST] Simulating access denied for user=${userId} sn=${sn}`,
+      // -------------------------------------------------------------------
+      // 3. FIRST SCAN FLOW: FETCH FROM LARAVEL BACKEND ON CACHE MISS
+      // -------------------------------------------------------------------
+      if (!userCache) {
+        const scannedAt = this.resolveScanTime(record.time);
+        const [current_date, present_time] = this.splitDateTime(scannedAt);
+
+        // Fallback chain for user name from terminal payload
+        const terminalUserName =
+          record.name ?? record.userName ?? record.personName ?? 'Unknown User';
+
+        this.logger.log(
+          `Cache miss for user=${userId} (${terminalUserName}) on sn=${sn}. Posting to Laravel...`,
         );
+
+        userCache = await this.fetchUserAccessFromLaravel(
+          normalizedSn,
+          String(userId),
+          current_date,
+          present_time.substring(0, 5), // "09:31"
+          terminalUserName,
+        );
+
+        if (userCache) {
+          // Cache in Redis: {"user_id": 2534, "name": "Chan Rith", "access": 1}
+          await this.redisService.set(userKey, userCache, 0);
+          this.logger.log(
+            `Cached user=${userId} (${userCache.name}) status (access=${userCache.access}) in Redis`,
+          );
+        }
+      }
+
+      // 4. Evaluate Access Permissions
+      let isAllowed = false;
+      let recordAccessReason: string | null = null;
+
+      if (!userCache) {
+        // Laravel API unreachable or returned error
         access = 0;
-        accessReason = 'Access Denied';
-        continue; // don't broadcast a denied scan to notificationsService
+        recordAccessReason = 'Access Denied: User Lookup Failed';
+        accessReason = recordAccessReason;
+        this.logger.warn(
+          `Access Denied (Lookup Failed): user=${userId} on sn=${sn}`,
+        );
+      } else if (Number(userCache.access) === 0) {
+        access = 0;
+        // Prefer Laravel's specific reason (e.g. "unknown user") when it sent one;
+        // fall back to a generic message otherwise.
+        recordAccessReason = userCache.reason
+          ? `Access Denied: ${userCache.reason}`
+          : 'Access Denied: User Deactivated or Unassigned';
+        accessReason = recordAccessReason;
+        this.logger.warn(
+          `Access Denied (${userCache.reason ?? 'Deactivated'}): user=${userId} (${userCache.name}) on sn=${sn}`,
+        );
+      } else {
+        isAllowed = true;
       }
 
-      const scannedAt = record.time || new Date().toISOString();
+      // Every scan gets broadcast to the room — allowed AND denied — so the
+      // connected app/dashboard screen shows a live status and the deny
+      // reason. (The AiFace terminal's own LCD has no confirmed way to
+      // render custom deny text on a result:true ack — see below — so this
+      // room broadcast is the "screen" this reason is actually meant for.)
+      const scannedAt = this.resolveScanTime(record.time);
       const [current_date, present_time] = this.splitDateTime(scannedAt);
-      const verifyMode = record.mode; // meaning unconfirmed — pending Appendix B/C from the protocol doc
-      const direction = record.inout; // confirmed: 0=in, 1=out
-      const status = direction === 1 ? 'CHECK_OUT' : 'CHECK_IN';
+      const userName = userCache?.name ?? 'Unknown User';
+      const status = !isAllowed
+        ? 'ACCESS_DENIED'
+        : record.inout === 1
+          ? 'CHECK_OUT'
+          : 'CHECK_IN';
 
       this.logger.log(
-        `Scan: user=${userId} sn=${sn} -> room ${route.roomId} event ${route.event} status ${status} on ${current_date} at ${present_time}`,
+        isAllowed
+          ? `Scan Allowed: user=${userId} (${userName}) sn=${sn} -> room ${route.roomId} status ${status}`
+          : `Scan Denied: user=${userId} (${userName}) sn=${sn} -> room ${route.roomId} reason "${recordAccessReason}"`,
       );
 
       await this.notificationsService.sendToRoom(
@@ -299,15 +329,18 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         route.event,
         {
           user_id: String(userId),
+          user_name: userName,
           device_sn: sn,
           status,
-          verify_mode: verifyMode,
+          ...(recordAccessReason ? { reason: recordAccessReason } : {}),
+          verify_mode: record.mode,
           current_date,
           present_time,
         },
       );
     }
 
+    // 6. Send Response to Terminal
     this.safeSend(ws, {
       ret: payload.cmd,
       sn,
@@ -320,19 +353,47 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  // Cambodia is UTC+7 and does not observe DST, so a fixed offset is safe here.
+  private static readonly LOCAL_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+  private toLocalString(date: Date): string {
+    return new Date(date.getTime() + HardwareGateway.LOCAL_OFFSET_MS)
+      .toISOString()
+      .replace('T', ' ')
+      .substring(0, 19);
+  }
+
   private nowFormatted(): string {
-    return new Date().toISOString().replace('T', ' ').substring(0, 19);
+    return this.toLocalString(new Date());
   }
 
   /**
-   * Splits a datetime string into [date, time].
-   * Handles both the device's native format ("2026-08-04 02:59:45")
-   * and the ISO fallback used when record.time is missing ("2026-08-04T02:59:45.123Z").
+   * Resolves a scan timestamp to local (+7) "YYYY-MM-DD HH:mm:ss".
+   * The AiFace terminal's `record.time` is emitted in UTC (confirmed: device
+   * sent "09:46:01" for a scan the server logged at 16:46 local) — so it must
+   * be shifted +7 before use, same as the `now()` fallback.
    */
+  private resolveScanTime(rawTime?: string): string {
+    if (!rawTime) {
+      return this.nowFormatted();
+    }
+    const isoCandidate = /Z|[+-]\d{2}:?\d{2}$/.test(rawTime)
+      ? rawTime
+      : `${rawTime.replace(' ', 'T')}Z`;
+    const parsed = new Date(isoCandidate);
+    if (isNaN(parsed.getTime())) {
+      this.logger.warn(
+        `Unparseable record.time "${rawTime}", falling back to now()`,
+      );
+      return this.nowFormatted();
+    }
+    return this.toLocalString(parsed);
+  }
+
   private splitDateTime(value: string): [string, string] {
     const normalized = value.replace('T', ' ').replace('Z', '');
     const [date, time = ''] = normalized.split(' ');
-    return [date, time.split('.')[0]]; // strip milliseconds if present
+    return [date, time.split('.')[0]];
   }
 
   private safeSend(ws: WebSocket, data: unknown) {
@@ -344,9 +405,91 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
-    this.lastScanAt.clear();
     if (this.wss) {
       this.wss.close();
+    }
+  }
+  /**
+   * Helper to POST scan info to Laravel Backend API
+   */
+  private async fetchUserAccessFromLaravel(
+    sn: string,
+    userId: string,
+    currentDate: string,
+    presentTime: string,
+    userName: string = 'Unknown User',
+  ): Promise<{
+    user_id: number;
+    name: string;
+    access: number;
+    reason?: string;
+  } | null> {
+    try {
+      const laravelUrl =
+        process.env.LARAVEL_API_URL ||
+        'https://aghast-neutron-slot.ngrok-free.dev';
+
+      // Payload expected by Laravel
+      const requestBody = {
+        current_date: currentDate,
+        present_time: presentTime,
+        // present_time: "07:15",
+        user_id: String(userId),
+        user_name: userName,
+      };
+
+      this.logger.debug(
+        `[send Request to laravel] ${JSON.stringify(requestBody)}`,
+      );
+
+      const response = await firstValueFrom(
+        this.httpService.post(
+          `${laravelUrl}/api/student/attendance/access-scan`,
+          requestBody,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Internal-Secret': process.env.INTERNAL_API_SECRET || '',
+            },
+            timeout: 3000, // 3s timeout
+          },
+        ),
+      );
+
+      // Verify response envelope and nested data object from Laravel
+      const responseData = response?.data;
+      if (
+        !responseData ||
+        responseData.status_code !== 200 ||
+        !responseData.data ||
+        responseData.data.access === undefined
+      ) {
+        this.logger.warn(
+          `Unexpected API response format from Laravel for user=${userId} on sn=${sn}: ${JSON.stringify(responseData)}`,
+        );
+        return null; // Return null so nothing gets cached on bad response
+      }
+
+      // Extract access flag (and optional deny reason) from response.data.data
+      const accessValue = Number(responseData.data.access);
+      const reasonValue: string | undefined =
+        typeof responseData.data.reason === 'string'
+          ? responseData.data.reason
+          : undefined;
+
+      return {
+        user_id: Number(userId),
+        name: userName, // Preserves "Chan Rith" from hardware payload
+        access: accessValue,
+        ...(reasonValue ? { reason: reasonValue } : {}),
+      };
+    } catch (err) {
+      this.logger.error(
+        `Failed to fetch user access from Laravel for user=${userId} on sn=${sn}: ${(err as Error).message}`,
+      );
+
+      // Return null so NO invalid/dummy user is saved to Redis on failure
+      return null;
     }
   }
 }
