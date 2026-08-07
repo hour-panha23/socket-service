@@ -75,7 +75,8 @@ export class NotificationsGateway
 
   afterInit(server: Namespace) {
     this.notificationsService.setServer(server);
-    this.logger.debug('NotificationsGateway initialized');
+    // this.logger.debug('NotificationsGateway initialized');
+    console.log(`NotificationsGateway initialized`);
   }
 
   async handleConnection(client: TypedSocket) {

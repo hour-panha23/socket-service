@@ -51,6 +51,217 @@ export class NotificationsService {
       .emit('admin:emit_log', { ...result, payload });
   }
 
+  // private emitAndTrack(
+  //   room: string,
+  //   rawEvent: string,
+  //   payload: Record<string, unknown>,
+  //   scope: EmitResult['scope'],
+  //   target: string,
+  //   senderSocketId?: string,
+  // ): EmitResult {
+  //   const totalConnectedClients = this.getConnectedClientCount();
+  //   const activeRoomStats = this.getRoomStats();
+
+  //   logger.debug(
+  //     `[emitAndTrack] Preparing to emit event (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}], payload: ${JSON.stringify(payload)}, senderSocketId: ${senderSocketId} | System State: Total Connected Clients: ${totalConnectedClients}, Active Rooms Count: ${activeRoomStats.length}`,
+  //   );
+
+  //   const result: EmitResult = {
+  //     event: rawEvent,
+  //     rawEvent,
+  //     scope,
+  //     target,
+  //     recipientCount: 0,
+  //     timestamp: new Date().toISOString(),
+  //   };
+
+  //   if (!this.server) {
+  //     logger.warn(
+  //       `[emitAndTrack] Skipped emit for "${rawEvent}" — Socket server is not initialized!`,
+  //     );
+  //     return result;
+  //   }
+
+  //   result.recipientCount = this.roomSize(room);
+
+  //   const emitter = senderSocketId
+  //     ? this.server.to(room).except(senderSocketId) // exclude the sender's own socket
+  //     : this.server.to(room);
+
+  //   emitter.emit(rawEvent, payload);
+  //   this.logToAdmin(result, payload);
+  //   void this.deliverWebhook(target, rawEvent, payload);
+
+  //   logger.debug(
+  //     `[emitAndTrack] Emitted "${rawEvent}" to room "${room}" | Target Room Size: ${result.recipientCount} | Total System Clients: ${totalConnectedClients} | Active Rooms Snapshot: ${JSON.stringify(activeRoomStats)}`,
+  //   );
+
+  //   return result;
+  // }
+
+  // async sendToProject(
+  //   projectId: string,
+  //   event: string,
+  //   payload: Record<string, unknown>,
+  //   senderSocketId?: string,
+  // ): Promise<EmitResult> {
+  //   logger.info('Emit to User');
+
+  //   // no appId at project scope — projectId is the widest owning identifier available
+  //   return this.emitAndTrack(
+  //     `project:${projectId}`,
+  //     event,
+  //     payload,
+  //     'project',
+  //     projectId,
+  //     senderSocketId,
+  //   );
+  // }
+
+  // async sendToApp(
+  //   projectId: string,
+  //   appId: string,
+  //   event: string,
+  //   payload: Record<string, unknown>,
+  //   senderSocketId?: string,
+  // ): Promise<EmitResult> {
+  //   logger.info('Emit to User');
+
+  //   return this.emitAndTrack(
+  //     `project:${projectId}:app:${appId}`,
+  //     event,
+  //     payload,
+  //     'app',
+  //     `${projectId}:${appId}`,
+  //     senderSocketId,
+  //   );
+  // }
+
+  // async sendToRoom(
+  //   projectId: string,
+  //   appId: string,
+  //   roomId: string,
+  //   event: string,
+  //   payload: Record<string, unknown>,
+  //   senderSocketId?: string,
+  // ): Promise<EmitResult> {
+  //   return this.emitAndTrack(
+  //     `project:${projectId}:app:${appId}:room:${roomId}`,
+  //     event,
+  //     payload,
+  //     'room',
+  //     roomId,
+  //     senderSocketId,
+  //   );
+  // }
+
+  // async sendToUser(
+  //   projectId: string,
+  //   appId: string,
+  //   userId: string,
+  //   event: string,
+  //   payload: Record<string, unknown>,
+  //   senderSocketId?: string,
+  // ): Promise<EmitResult> {
+  //   logger.info('Emit to User');
+
+  //   return this.emitAndTrack(
+  //     `user:${projectId}:${appId}:${userId}`,
+  //     event,
+  //     payload,
+  //     'user',
+  //     `${projectId}:${appId}:${userId}`,
+  //     senderSocketId,
+  //   );
+  // }
+
+  // async sendToAll(
+  //   event: string,
+  //   payload: Record<string, unknown>,
+  //   senderSocketId?: string,
+  // ): Promise<EmitResult> {
+  //   logger.info('Emit to User');
+
+  //   const result: EmitResult = {
+  //     event: 'notification',
+  //     rawEvent: event,
+  //     scope: 'user',
+  //     target: 'broadcast',
+  //     recipientCount: this.getConnectedClientCount() - (senderSocketId ? 1 : 0),
+  //     timestamp: new Date().toISOString(),
+  //   };
+
+  //   if (!this.server) return result;
+
+  //   const emitter = senderSocketId
+  //     ? this.server.except(senderSocketId)
+  //     : this.server;
+  //   emitter.emit('notification', payload);
+  //   this.logToAdmin(result, payload);
+  //   return result;
+  // }
+
+  // async sendMessage(body: EmitMessageDto) {
+  //   const {
+  //     project_id,
+  //     app_id,
+  //     room,
+  //     user_id,
+  //     event,
+  //     payload,
+  //     sender_socket_id,
+  //   } = body;
+
+  //   logger.info('[Send Message] with body', body);
+
+  //   // Target User
+  //   if (user_id && app_id && project_id) {
+  //     return this.sendToUser(
+  //       project_id,
+  //       app_id,
+  //       user_id,
+  //       event,
+  //       payload,
+  //       sender_socket_id,
+  //     );
+  //   }
+
+  //   // Target room within app & project
+  //   if (room && app_id && project_id) {
+  //     return this.sendToRoom(
+  //       project_id,
+  //       app_id,
+  //       room,
+  //       event,
+  //       payload,
+  //       sender_socket_id,
+  //     );
+  //   }
+
+  //   // Target application within project
+  //   if (app_id && project_id) {
+  //     return this.sendToApp(
+  //       project_id,
+  //       app_id,
+  //       event,
+  //       payload,
+  //       sender_socket_id,
+  //     );
+  //   }
+
+  //   // Target whole project
+  //   if (project_id) {
+  //     return this.sendToProject(project_id, event, payload, sender_socket_id);
+  //   }
+
+  //   // Broadcast to all connected clients
+  //   return this.sendToAll(event, payload, sender_socket_id);
+  // }
+
+  // ---- Monitoring reads ----
+
+  // src/modules/notifications/notifications.service.ts
+
   private emitAndTrack(
     room: string,
     rawEvent: string,
@@ -58,12 +269,13 @@ export class NotificationsService {
     scope: EmitResult['scope'],
     target: string,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): EmitResult {
     const totalConnectedClients = this.getConnectedClientCount();
     const activeRoomStats = this.getRoomStats();
 
     logger.debug(
-      `[emitAndTrack] Preparing to emit event (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}], payload: ${JSON.stringify(payload)}, senderSocketId: ${senderSocketId} | System State: Total Connected Clients: ${totalConnectedClients}, Active Rooms Count: ${activeRoomStats.length}`,
+      `[emitAndTrack] Preparing to emit event (raw: "${rawEvent}") to room "${room}" [scope: ${scope}, target: ${target}, selfEmit: ${!!selfEmit}], payload: ${JSON.stringify(payload)}, senderSocketId: ${senderSocketId}`,
     );
 
     const result: EmitResult = {
@@ -82,18 +294,24 @@ export class NotificationsService {
       return result;
     }
 
-    result.recipientCount = this.roomSize(room);
-
-    const emitter = senderSocketId
-      ? this.server.to(room).except(senderSocketId) // exclude the sender's own socket
-      : this.server.to(room);
+    let emitter;
+    if (selfEmit && senderSocketId) {
+      // Direct emit to sender socket only
+      emitter = this.server.to(senderSocketId);
+      result.recipientCount = 1;
+    } else {
+      result.recipientCount = this.roomSize(room);
+      emitter = senderSocketId
+        ? this.server.to(room).except(senderSocketId)
+        : this.server.to(room);
+    }
 
     emitter.emit(rawEvent, payload);
     this.logToAdmin(result, payload);
     void this.deliverWebhook(target, rawEvent, payload);
 
     logger.debug(
-      `[emitAndTrack] Emitted "${rawEvent}" to room "${room}" | Target Room Size: ${result.recipientCount} | Total System Clients: ${totalConnectedClients} | Active Rooms Snapshot: ${JSON.stringify(activeRoomStats)}`,
+      `[emitAndTrack] Emitted "${rawEvent}" to room "${room}" | Target Room Size: ${result.recipientCount} | Total System Clients: ${totalConnectedClients}`,
     );
 
     return result;
@@ -104,10 +322,8 @@ export class NotificationsService {
     event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): Promise<EmitResult> {
-    logger.info('Emit to User');
-
-    // no appId at project scope — projectId is the widest owning identifier available
     return this.emitAndTrack(
       `project:${projectId}`,
       event,
@@ -115,6 +331,7 @@ export class NotificationsService {
       'project',
       projectId,
       senderSocketId,
+      selfEmit,
     );
   }
 
@@ -124,9 +341,8 @@ export class NotificationsService {
     event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): Promise<EmitResult> {
-    logger.info('Emit to User');
-
     return this.emitAndTrack(
       `project:${projectId}:app:${appId}`,
       event,
@@ -134,6 +350,7 @@ export class NotificationsService {
       'app',
       `${projectId}:${appId}`,
       senderSocketId,
+      selfEmit,
     );
   }
 
@@ -144,6 +361,7 @@ export class NotificationsService {
     event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): Promise<EmitResult> {
     return this.emitAndTrack(
       `project:${projectId}:app:${appId}:room:${roomId}`,
@@ -152,6 +370,7 @@ export class NotificationsService {
       'room',
       roomId,
       senderSocketId,
+      selfEmit,
     );
   }
 
@@ -162,9 +381,8 @@ export class NotificationsService {
     event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): Promise<EmitResult> {
-    logger.info('Emit to User');
-
     return this.emitAndTrack(
       `user:${projectId}:${appId}:${userId}`,
       event,
@@ -172,6 +390,7 @@ export class NotificationsService {
       'user',
       `${projectId}:${appId}:${userId}`,
       senderSocketId,
+      selfEmit,
     );
   }
 
@@ -179,23 +398,33 @@ export class NotificationsService {
     event: string,
     payload: Record<string, unknown>,
     senderSocketId?: string,
+    selfEmit?: boolean,
   ): Promise<EmitResult> {
-    logger.info('Emit to User');
+    const recipientCount =
+      selfEmit && senderSocketId
+        ? 1
+        : this.getConnectedClientCount() - (senderSocketId ? 1 : 0);
 
     const result: EmitResult = {
       event: 'notification',
       rawEvent: event,
       scope: 'user',
       target: 'broadcast',
-      recipientCount: this.getConnectedClientCount() - (senderSocketId ? 1 : 0),
+      recipientCount,
       timestamp: new Date().toISOString(),
     };
 
     if (!this.server) return result;
 
-    const emitter = senderSocketId
-      ? this.server.except(senderSocketId)
-      : this.server;
+    let emitter;
+    if (selfEmit && senderSocketId) {
+      emitter = this.server.to(senderSocketId);
+    } else {
+      emitter = senderSocketId
+        ? this.server.except(senderSocketId)
+        : this.server;
+    }
+
     emitter.emit('notification', payload);
     this.logToAdmin(result, payload);
     return result;
@@ -210,6 +439,7 @@ export class NotificationsService {
       event,
       payload,
       sender_socket_id,
+      self_emit,
     } = body;
 
     logger.info('[Send Message] with body', body);
@@ -223,6 +453,7 @@ export class NotificationsService {
         event,
         payload,
         sender_socket_id,
+        self_emit,
       );
     }
 
@@ -235,6 +466,7 @@ export class NotificationsService {
         event,
         payload,
         sender_socket_id,
+        self_emit,
       );
     }
 
@@ -246,21 +478,24 @@ export class NotificationsService {
         event,
         payload,
         sender_socket_id,
+        self_emit,
       );
     }
 
     // Target whole project
     if (project_id) {
-      return this.sendToProject(project_id, event, payload, sender_socket_id);
+      return this.sendToProject(
+        project_id,
+        event,
+        payload,
+        sender_socket_id,
+        self_emit,
+      );
     }
 
     // Broadcast to all connected clients
-    return this.sendToAll(event, payload, sender_socket_id);
+    return this.sendToAll(event, payload, sender_socket_id, self_emit);
   }
-
-  // ---- Monitoring reads ----
-
-  // src/modules/notifications/notifications.service.ts
 
   getRoomStats(): { room: string; clientCount: number }[] {
     if (!this.server) return [];

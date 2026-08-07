@@ -9,7 +9,7 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   const app = await NestFactory.create(AppModule, {
     // logger: ['error', 'warn', ],
-    logger: ['error', 'warn', 'log', 'debug'],
+    logger: ['error', 'warn', 'debug', 'log'],
     rawBody: true,
   });
 

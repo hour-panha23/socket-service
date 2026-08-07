@@ -1,10 +1,71 @@
-import { Json, Obj, Str } from '@/common/decorator/field.decorator';
+// import { Bool, Json, Obj, Str } from '@/common/decorator/field.decorator';
+
+// export class EmitToProjectDto {
+//   @Str() project_id!: string;
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+
+// export class EmitToAppDto {
+//   @Str() project_id!: string;
+//   @Str() app_id!: string;
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+
+// export class EmitToRoomDto {
+//   @Str() project_id!: string;
+//   @Str() app_id!: string;
+//   @Str() room!: string;
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+
+// export class EmitToUserDto {
+//   @Str() project_id!: string;
+//   @Str() app_id!: string;
+//   @Str() user_id!: string;
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+// export class EmitBroadcastDto {
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+
+// export class EmitMessageDto {
+//   @Str() event!: string;
+//   @Json() payload!: Record<string, unknown>;
+//   @Str(true) project_id!: string;
+//   @Str(true) app_id!: string;
+//   @Str(true) user_id?: string;
+//   @Str(true) room!: string;
+//   @Str(true) sender_socket_id?: string;
+//   @Bool(true) self_emit?: boolean;
+// }
+
+// export class EmitBoardCastMessageDtp {
+//   @Str() project_id!: string;
+//   @Str(true) app_id!: string;
+//   @Str(true) room!: string;
+//   @Str() event!: string;
+//   @Obj() payload!: Record<string, unknown>;
+//   @Str(true) sender_socket_id?: string;
+// }
+
+import { Bool, Json, Obj, Str } from '@/common/decorator/field.decorator';
 
 export class EmitToProjectDto {
   @Str() project_id!: string;
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
 
 export class EmitToAppDto {
@@ -13,6 +74,7 @@ export class EmitToAppDto {
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
 
 export class EmitToRoomDto {
@@ -22,6 +84,7 @@ export class EmitToRoomDto {
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
 
 export class EmitToUserDto {
@@ -31,11 +94,14 @@ export class EmitToUserDto {
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
+
 export class EmitBroadcastDto {
   @Str() event!: string;
   @Obj() payload!: Record<string, unknown>;
   @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
 
 export class EmitMessageDto {
@@ -46,13 +112,5 @@ export class EmitMessageDto {
   @Str(true) user_id?: string;
   @Str(true) room!: string;
   @Str(true) sender_socket_id?: string;
-}
-
-export class EmitBoardCastMessageDtp {
-  @Str() project_id!: string;
-  @Str(true) app_id!: string;
-  @Str(true) room!: string;
-  @Str() event!: string;
-  @Obj() payload!: Record<string, unknown>;
-  @Str(true) sender_socket_id?: string;
+  @Bool(true) self_emit?: boolean;
 }
