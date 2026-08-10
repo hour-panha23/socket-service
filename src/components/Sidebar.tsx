@@ -55,7 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           }`}
         >
           <div className="flex items-center gap-3 overflow-hidden">
-            <div className="flex justify-center items-center bg-gradient-to-tr from-indigo-600 to-indigo-500 shadow-indigo-600/25 shadow-lg rounded-xl w-9 h-9 text-white shrink-0">
+            <div className="flex justify-center items-center bg-linear-to-tr from-indigo-600 to-indigo-500 shadow-indigo-600/25 shadow-lg rounded-xl w-9 h-9 text-white shrink-0">
               <Zap className="fill-white w-5 h-5" />
             </div>
             {!isCollapsed && (
