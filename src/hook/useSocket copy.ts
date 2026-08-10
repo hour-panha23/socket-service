@@ -22,19 +22,7 @@ export function useSocket() {
   const [emitLogs, setEmitLogs] = useState<any[]>([]);
   const [connectedClientCount, setConnectedClientCount] = useState(0);
 
-  // --- New: connection health / control state ---
-  const [latency, setLatency] = useState<number | null>(null);
-  const [autoReconnect, setAutoReconnect] = useState(true);
-  const [lastDisconnectReason, setLastDisconnectReason] = useState<
-    string | null
-  >(null);
-  const [reconnectAttempt, setReconnectAttempt] = useState(0);
-
   const socketRef = useRef<Socket | null>(null);
-  const pingStartRef = useRef<number>(0);
-  const autoReconnectRef = useRef(autoReconnect);
-  // eslint-disable-next-line react-hooks/refs
-  autoReconnectRef.current = autoReconnect;
 
   const addLog = useCallback(
     (msg: string, type: "info" | "warn" | "error" | "emit" = "info") => {
@@ -51,7 +39,6 @@ export function useSocket() {
       setSocket(null);
       setIsConnected(false);
       setAdminSubscribed(false);
-      setLatency(null);
       addLog("Disconnected from socket server", "warn");
     }
   }, [addLog]);
@@ -73,22 +60,14 @@ export function useSocket() {
         const socketUrl =
           process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3000";
 
-        // Gateway is declared with `namespace: '/notifications'` — must connect
-        // to that path explicitly, connecting to the root '/' bypasses all
-        // auth/logic registered on the gateway.
-        const socketInstance = io(`${socketUrl}/notifications`, {
+        // Pass auth directly in auth payload (Standard for Socket.io NestJS Gateways)
+        const socketInstance = io(socketUrl, {
           transports: ["websocket"],
           auth: authData,
-          reconnection: autoReconnectRef.current,
-          reconnectionAttempts: Infinity,
-          reconnectionDelay: 1000,
-          reconnectionDelayMax: 5000,
         });
 
         socketInstance.on("connect", () => {
           setIsConnected(true);
-          setReconnectAttempt(0);
-          setLastDisconnectReason(null);
           addLog(
             `Connected successfully! Socket ID: ${socketInstance.id}`,
             "info",
@@ -102,56 +81,14 @@ export function useSocket() {
 
         socketInstance.on("disconnect", (reason) => {
           setIsConnected(false);
-          setLatency(null);
-          setLastDisconnectReason(reason);
           addLog(`Disconnected: ${reason}`, "warn");
         });
 
-        // --- Reconnection lifecycle (Manager-level events) ---
-        socketInstance.io.on("reconnect_attempt", (attempt: number) => {
-          setReconnectAttempt(attempt);
-          addLog(`Reconnect attempt #${attempt}...`, "warn");
-        });
-
-        socketInstance.io.on("reconnect", (attempt: number) => {
-          setIsConnected(true);
-          setReconnectAttempt(0);
-          addLog(`Reconnected after ${attempt} attempt(s)`, "info");
-        });
-
-        socketInstance.io.on("reconnect_failed", () => {
-          addLog("Reconnect failed — giving up", "error");
-        });
-
-        socketInstance.io.on("reconnect_error", (err: any) => {
-          addLog(`Reconnect error: ${err?.message ?? err}`, "error");
-        });
-
-        // --- Latency: measured off the raw engine.io ping/pong heartbeat,
-        // no custom server handler required. Client sends "ping", server
-        // replies "pong" automatically every pingInterval. ---
-        socketInstance.io.on("open", () => {
-          const engine = (socketInstance.io as any).engine;
-          if (!engine) return;
-
-          engine.on("packetCreate", (packet: any) => {
-            if (packet.type === "ping") {
-              pingStartRef.current = Date.now();
-            }
-          });
-
-          engine.on("packet", (packet: any) => {
-            if (packet.type === "pong" && pingStartRef.current) {
-              setLatency(Date.now() - pingStartRef.current);
-            }
-          });
-        });
-
-        socketInstance.on("admin:emit_log", (data) => {
+        socketInstance.on("telemetry:emit", (data) => {
           setEmitLogs((prev) => [data, ...prev]);
         });
 
-        socketInstance.on("admin:client_event", (data) => {
+        socketInstance.on("telemetry:client", (data) => {
           setClientEvents((prev) => [data, ...prev]);
           if (data.type === "connect") setConnectedClientCount((c) => c + 1);
           if (data.type === "disconnect")
@@ -181,20 +118,6 @@ export function useSocket() {
     }
   }, [isConnected, adminSubscribed, addLog]);
 
-  const toggleAutoReconnect = useCallback(() => {
-    setAutoReconnect((prev) => {
-      const next = !prev;
-      if (socketRef.current?.io) {
-        socketRef.current.io.reconnection(next);
-      }
-      addLog(
-        next ? "Auto-reconnect enabled" : "Auto-reconnect disabled",
-        "info",
-      );
-      return next;
-    });
-  }, [addLog]);
-
   const clearLogs = useCallback(() => {
     setLogs([]);
   }, []);
@@ -219,11 +142,5 @@ export function useSocket() {
     clientEvents,
     emitLogs,
     connectedClientCount,
-    // new
-    latency,
-    autoReconnect,
-    toggleAutoReconnect,
-    lastDisconnectReason,
-    reconnectAttempt,
   };
 }
