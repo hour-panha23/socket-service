@@ -7,7 +7,7 @@ import React, { useState } from "react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -18,7 +18,7 @@ export default function LoginPage() {
     setErrorMessage(null);
 
     try {
-      const response = await login(email, password);
+      const response = await login(username, password);
 
       if (response.status_code !== 200) {
         throw new Error(response.message || "Invalid email or password");
@@ -72,24 +72,24 @@ export default function LoginPage() {
           <div className="space-y-4">
             <div>
               <label
-                htmlFor="email"
+                htmlFor="username"
                 className="block mb-1.5 font-medium text-slate-300 text-xs"
               >
-                Email address
+                Username
               </label>
               <div className="relative">
                 <div className="left-0 absolute inset-y-0 flex items-center pl-3 pointer-events-none">
                   <Mail className="w-4 h-4 text-slate-500" />
                 </div>
                 <input
-                  id="email"
-                  type="email"
+                  id="username"
+                  type="text"
                   required
                   onKeyDown={handleKeyDown}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="block bg-slate-950 py-2.5 pr-3 pl-10 border border-slate-800 focus:border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full text-slate-200 text-sm transition placeholder-slate-500"
-                  placeholder="you@example.com"
+                  placeholder="your username"
                 />
               </div>
             </div>
