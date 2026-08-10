@@ -46,15 +46,13 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
     "project_e4de70df23a96fdb",
   );
   const [projectSecretInput, setProjectSecretInput] = useState(
-    `13e3a980251188f4917925fee2f87b8025e967b92f73484a24d90431189d55cb`,
+    `e7f8a49a3e5cf1556e67494fad9c959166a1e5cf2740377a671d5e33f610cae0`,
   );
 
   // Channel/Room Management Inputs
   const [projectId, setProjectId] = useState("project_e4de70df23a96fdb");
-  const [appIdRoom, setAppIdRoom] = useState(
-    "8AE496F4C88EB47721B5B202EBDBC546",
-  );
-  const [channelId, setChannelId] = useState("invoices");
+  const [appIdRoom, setAppIdRoom] = useState("learning_hub");
+  const [channelId, setChannelId] = useState("course_101");
   const [joinedChannels, setJoinedChannels] = useState<string[]>([]);
 
   // S2S REST Dispatch Inputs
@@ -64,10 +62,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
   const [emitProjectId, setEmitProjectId] = useState(
     "project_e4de70df23a96fdb",
   );
-  const [emitAppId, setEmitAppId] = useState(
-    "8AE496F4C88EB47721B5B202EBDBC546",
-  );
-  const [emitRoomId, setEmitRoomId] = useState("invoices");
+  const [emitAppId, setEmitAppId] = useState("learning_hub");
+  const [emitRoomId, setEmitRoomId] = useState("course_101");
   const [emitUserId, setEmitUserId] = useState("user_123");
   const [emitEventName, setEmitEventName] = useState("notification");
   const [emitPayload, setEmitPayload] = useState('{"message":"hello"}');
@@ -143,9 +139,12 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       return alert("Payload must be valid JSON");
     }
 
+    const senderSocketId = socket?.id;
+
     const bodyPayload: Record<string, any> = {
       event: emitEventName,
       payload,
+      senderSocketId,
     };
 
     if (emitScope === "broadcast") {
@@ -176,10 +175,6 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
         process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
       const endpointUrl = `${baseUrl}/notifications/emit`;
 
-      logger.info(
-        `→ Dispatching "${emitEventName}" [scope: ${emitScope}] → ${endpointUrl}`,
-      );
-
       const res = await fetch(endpointUrl, {
         method: "POST",
         headers: {
@@ -198,13 +193,8 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       }
 
       setEmitResult(`✓ Dispatched → Scope: ${data.scope || "Success"}`);
-      logger.info(
-        `✓ "${emitEventName}" succeeded → scope: ${data.scope || emitScope}, recipients: ${data.recipientCount ?? "n/a"}`,
-      );
     } catch (e: any) {
-      logger.error(
-        `✗ "${emitEventName}" failed [scope: ${emitScope}] → ${e.message || "Failed to send payload"}`,
-      );
+      logger.error(e);
       setEmitResult(`✗ Failed: ${e.message || "Failed to send payload"}`);
     }
   };

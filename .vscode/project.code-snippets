@@ -1,0 +1,27 @@
+{
+  "Create AlertDialog": {
+    "scope": "typescriptreact,javascriptreact",
+    "prefix": "ald",
+    "body": [
+      "<AlertDialog",
+      "isOpen={alertDialog?.isOpen || false}",
+      "variant={alertDialog?.variant || \"error\"}",
+      "title={alertDialog?.title || \"\"}",
+      "description={alertDialog?.description || \"\"}",
+      "showCancelButton={false}",
+      "confirmLabel={alertDialog?.confirmLabel || \"OK\"}",
+      "onConfirm={() => setAlertDialog(null)}",
+      "onClose={() => setAlertDialog(null)}",
+      "/>",
+    ],
+    "description": "Expands ald into <AlertDialog /> with cursor at confirmLabel",
+  },
+  "Use AlertDialog": {
+    "scope": "typescriptreact,javascriptreact",
+    "prefix": "useAld",
+    "body": [
+      "const [alertDialog, setAlertDialog] = useState<AlertDialogState | null>(null);",
+    ],
+    "description": "Expands useAld into useAlertDialog() with cursor at errorDialog",
+  },
+}

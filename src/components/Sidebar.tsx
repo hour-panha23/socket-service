@@ -4,14 +4,15 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
-  KeyRound,
+  Cpu,
+  FolderKanban,
   Zap,
 } from "lucide-react";
 import React, { useState } from "react";
 
 interface SidebarProps {
-  activeTab: "monitoring" | "project";
-  setActiveTab: (tab: "monitoring" | "project") => void;
+  activeTab: "monitoring" | "project" | "device";
+  setActiveTab: (tab: "monitoring" | "project" | "device") => void;
   isConnected: boolean;
 }
 
@@ -22,113 +23,157 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const activeClass =
-    "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium bg-indigo-600/10 text-indigo-400 border border-indigo-500/20 transition-all duration-150";
-  const inactiveClass =
-    "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-all duration-150";
+  const navItems = [
+    {
+      id: "monitoring" as const,
+      label: "Realtime Monitor",
+      icon: Activity,
+    },
+    {
+      id: "project" as const,
+      label: "Project Management",
+      icon: FolderKanban,
+    },
+    {
+      id: "device" as const,
+      label: "Device Management",
+      icon: Cpu,
+    },
+  ];
 
   return (
     <aside
-      className={`z-10 flex flex-col justify-between bg-slate-900/80 backdrop-blur-md border-slate-800/80 border-r shrink-0 transition-all duration-200 ${
-        isCollapsed ? "w-16 p-3" : "w-64 p-4"
+      className={`relative z-20 flex flex-col justify-between bg-slate-900/90 backdrop-blur-xl border-slate-800/80 border-r shrink-0 transition-all duration-300 ease-in-out select-none ${
+        isCollapsed ? "w-20 p-3" : "w-64 p-4"
       }`}
     >
       <div className="space-y-6">
-        {/* Header / Logo / Collapse Toggle */}
+        {/* Header / Brand */}
         <div
           className={`flex items-center ${
             isCollapsed ? "justify-center" : "justify-between px-1"
           }`}
         >
-          <div className="flex items-center gap-3">
-            <div className="flex justify-center items-center bg-indigo-600 shadow-indigo-500/30 shadow-lg rounded-lg w-8 h-8 font-bold text-white shrink-0">
-              <Zap className="fill-white w-4 h-4" />
+          <div className="flex items-center gap-3 overflow-hidden">
+            <div className="flex justify-center items-center bg-gradient-to-tr from-indigo-600 to-indigo-500 shadow-indigo-600/25 shadow-lg rounded-xl w-9 h-9 text-white shrink-0">
+              <Zap className="fill-white w-5 h-5" />
             </div>
             {!isCollapsed && (
-              <div>
-                <h1 className="font-bold text-white text-sm tracking-tight whitespace-nowrap">
+              <div className="flex flex-col">
+                <h1 className="font-bold text-white text-sm truncate tracking-tight">
                   Socket Center
                 </h1>
-                <p className="font-mono text-[10px] text-slate-400 whitespace-nowrap">
+                <span className="font-mono text-[10px] text-slate-400 truncate">
                   v1.2.0 • Gateway
-                </p>
+                </span>
               </div>
             )}
           </div>
 
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="hover:bg-slate-800 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition"
-            title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-          >
-            {isCollapsed ? (
-              <ChevronRight className="w-4 h-4" />
-            ) : (
+          {!isCollapsed && (
+            <button
+              onClick={() => setIsCollapsed(true)}
+              className="hover:bg-slate-800/80 p-1.5 rounded-lg text-slate-400 hover:text-white transition cursor-pointer"
+              title="Collapse Sidebar"
+            >
               <ChevronLeft className="w-4 h-4" />
-            )}
-          </button>
+            </button>
+          )}
         </div>
 
-        {/* Navigation Menu */}
-        <nav className="space-y-1">
-          <button
-            onClick={() => setActiveTab("monitoring")}
-            className={`${
-              activeTab === "monitoring" ? activeClass : inactiveClass
-            } ${isCollapsed ? "justify-center px-0" : ""}`}
-            title="Realtime Monitor"
-          >
-            <Activity className="w-4 h-4 shrink-0" />
-            {!isCollapsed && (
-              <span className="whitespace-nowrap">Realtime Monitor</span>
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab("project")}
-            className={`${
-              activeTab === "project" ? activeClass : inactiveClass
-            } ${isCollapsed ? "justify-center px-0" : ""}`}
-            title="Project Management"
-          >
-            <KeyRound className="w-4 h-4 shrink-0" />
-            {!isCollapsed && (
-              <span className="whitespace-nowrap">Project Management</span>
-            )}
-          </button>
-        </nav>
+        {/* Navigation Section */}
+        <div className="space-y-2">
+          {!isCollapsed && (
+            <p className="px-3 font-mono text-[10px] text-slate-400 uppercase tracking-wider">
+              Navigation
+            </p>
+          )}
+
+          <nav className="space-y-1">
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  title={isCollapsed ? item.label : undefined}
+                  className={`group relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium transition-all duration-150 cursor-pointer ${
+                    isCollapsed ? "justify-center px-0" : ""
+                  } ${
+                    isActive
+                      ? "bg-indigo-600/15 text-indigo-300 font-semibold shadow-sm"
+                      : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
+                  }`}
+                >
+                  {/* Left Accent Indicator Pill */}
+                  {isActive && (
+                    <span className="top-2 bottom-2 left-0 absolute bg-indigo-500 rounded-r-full w-1" />
+                  )}
+
+                  <Icon
+                    className={`w-4 h-4 shrink-0 transition-transform group-hover:scale-110 ${
+                      isActive
+                        ? "text-indigo-400"
+                        : "text-slate-400 group-hover:text-slate-200"
+                    }`}
+                  />
+
+                  {!isCollapsed && (
+                    <span className="truncate">{item.label}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+        </div>
       </div>
 
-      {/* Footer / Status Badge */}
-      <div className="pt-4 border-slate-800/60 border-t">
+      {/* Footer Area: Socket Connection & Expand Toggle */}
+      <div className="space-y-3 pt-4 border-slate-800/80 border-t">
+        {/* Connection Status Badge */}
         <div
-          className={`flex items-center bg-slate-950/50 border border-slate-800/50 rounded-lg ${
-            isCollapsed ? "justify-center p-2.5" : "justify-between p-3"
+          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl bg-slate-950/60 border border-slate-800/60 ${
+            isCollapsed ? "justify-center px-0" : ""
           }`}
+          title={
+            isConnected
+              ? "Gateway Socket Connected"
+              : "Gateway Socket Disconnected"
+          }
         >
-          {!isCollapsed && (
-            <span className="font-medium text-[11px] text-slate-400 whitespace-nowrap">
-              Socket Status
-            </span>
-          )}
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full text-[10px] font-semibold border ${
-              isCollapsed ? "p-1.5" : "px-2.5 py-0.5"
-            } ${
-              isConnected
-                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-            }`}
-            title={isConnected ? "Connected" : "Disconnected"}
-          >
+          <span className="relative flex w-2 h-2 shrink-0">
+            {isConnected && (
+              <span className="top-0 left-0 absolute bg-emerald-400 rounded-full w-2 h-2 animate-ping" />
+            )}
             <span
-              className={`w-1.5 h-1.5 rounded-full ${
-                isConnected ? "bg-emerald-500 animate-pulse" : "bg-rose-500"
+              className={`relative inline-flex rounded-full w-2 h-2 ${
+                isConnected ? "bg-emerald-500" : "bg-rose-500"
               }`}
             />
-            {!isCollapsed && (isConnected ? "Connected" : "Disconnected")}
           </span>
+
+          {!isCollapsed && (
+            <span className="font-mono text-[11px] text-slate-300 truncate">
+              {isConnected ? "Connected" : "Disconnected"}
+            </span>
+          )}
         </div>
+
+        {/* Expand Toggle Button (Shown when collapsed) */}
+        {isCollapsed && (
+          <button
+            onClick={() => setIsCollapsed(false)}
+            className="flex justify-center items-center hover:bg-slate-800 p-2 rounded-xl w-full text-slate-400 hover:text-white transition cursor-pointer"
+            title="Expand Sidebar"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        )}
       </div>
     </aside>
   );
 };
+
+export default Sidebar;

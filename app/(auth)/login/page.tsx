@@ -1,12 +1,13 @@
 "use client";
 
+import { login } from "@/src/services/auth/auth.service";
 import { Lock, Mail } from "lucide-react";
 import { useRouter } from "next/navigation";
 import React, { useState } from "react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -16,31 +17,19 @@ export default function LoginPage() {
     setIsLoading(true);
     setErrorMessage(null);
 
-    const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
-
     try {
-      const response = await fetch(`${baseUrl}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      });
+      const response = await login(username, password);
 
-      const result = await response.json();
-
-      if (!response.ok || result.status_code !== 200) {
-        throw new Error(result.message || "Invalid email or password");
+      if (response.status_code !== 200) {
+        throw new Error(response.message || "Invalid email or password");
       }
 
-      const { user, access_token, refresh_token } = result.data;
-
       // 1. Save user object in Local Storage
-      localStorage.setItem("user", JSON.stringify(user));
+      localStorage.setItem("user", JSON.stringify(response.data?.user));
 
       // 2. Save tokens in Cookies
-      document.cookie = `access_token=${access_token}; path=/; SameSite=Lax; Secure`;
-      document.cookie = `refresh_token=${refresh_token}; path=/; SameSite=Lax; Secure`;
+      document.cookie = `access_token=${response.data?.access_token}; path=/; SameSite=Lax; Secure`;
+      document.cookie = `refresh_token=${response.data?.refresh_token}; path=/; SameSite=Lax; Secure`;
 
       // Redirect to dashboard on success
       router.push("/monitoring");
@@ -83,24 +72,24 @@ export default function LoginPage() {
           <div className="space-y-4">
             <div>
               <label
-                htmlFor="email"
+                htmlFor="username"
                 className="block mb-1.5 font-medium text-slate-300 text-xs"
               >
-                Email address
+                Username
               </label>
               <div className="relative">
                 <div className="left-0 absolute inset-y-0 flex items-center pl-3 pointer-events-none">
                   <Mail className="w-4 h-4 text-slate-500" />
                 </div>
                 <input
-                  id="email"
-                  type="email"
+                  id="username"
+                  type="text"
                   required
                   onKeyDown={handleKeyDown}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="block bg-slate-950 py-2.5 pr-3 pl-10 border border-slate-800 focus:border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 w-full text-slate-200 text-sm transition placeholder-slate-500"
-                  placeholder="you@example.com"
+                  placeholder="your username"
                 />
               </div>
             </div>

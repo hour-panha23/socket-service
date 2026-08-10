@@ -8,14 +8,11 @@ interface ActionMenuProps {
     id: string;
     is_active: boolean;
   };
-  onToggleActive: (id: string, active: boolean) => void;
   onRegenerateSecret: () => void;
   onDelete: () => void;
 }
 
 export const ActionMenu: React.FC<ActionMenuProps> = ({
-  project,
-  onToggleActive,
   onRegenerateSecret,
   onDelete,
 }) => {
@@ -73,7 +70,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
               }}
               className="z-60 absolute space-y-1 bg-slate-900 shadow-2xl p-1 border border-slate-800 rounded-lg w-36 text-xs text-left"
             >
-              <button
+              {/* <button
                 onClick={() => {
                   setIsOpen(false);
                   onToggleActive(project.id, !project.is_active);
@@ -85,7 +82,7 @@ export const ActionMenu: React.FC<ActionMenuProps> = ({
                 }`}
               >
                 {project.is_active ? "Disable" : "Enable"}
-              </button>
+              </button> */}
               <button
                 onClick={() => {
                   setIsOpen(false);
