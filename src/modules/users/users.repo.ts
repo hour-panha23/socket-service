@@ -1,4 +1,5 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { logger } from '@/common/logger/logger.service';
+import { Inject, Injectable } from '@nestjs/common';
 import { Knex } from 'knex';
 import { CreateUserData, UpdateUserData, UserEntity } from './users.types';
 
@@ -13,6 +14,11 @@ export class UsersRepository {
 
   async findByEmail(email: string): Promise<UserEntity | null> {
     const user = await this.knex('users').where({ email }).first();
+    return user || null;
+  }
+
+  async findByUsername(username: string): Promise<UserEntity | null> {
+    const user = await this.knex('users').where({ username }).first();
     return user || null;
   }
 

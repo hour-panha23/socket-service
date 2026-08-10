@@ -1,12 +1,16 @@
 import Knex from 'knex';
 import knexfile from '../../knexfile';
 
-export const USER_KNEX = 'USER_KNEX';
+export const KNEX_CONNECTION = 'KNEX_CONNECTION';
 
-export const userKnexProvider = {
-  provide: USER_KNEX,
+export const knexProvider = {
+  provide: KNEX_CONNECTION,
   useFactory: () => {
-    const cfg = (knexfile as { users: import('knex').Knex.Config<any> }).users;
-    return Knex(cfg);
+    const environment = process.env.NODE_ENV || 'development';
+    const config =
+      (knexfile as Record<string, import('knex').Knex.Config>)[environment] ||
+      knexfile.development;
+
+    return Knex(config);
   },
 };

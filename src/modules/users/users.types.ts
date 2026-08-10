@@ -5,6 +5,7 @@ export interface UserEntity {
   first_name: string | null;
   last_name: string | null;
   role: 'admin' | 'user';
+  username?: string;
   is_active: boolean;
   created_at: Date;
   updated_at: Date;

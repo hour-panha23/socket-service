@@ -1,7 +1,7 @@
-import { Email, Str } from '@/common/decorator/field.decorator';
+import { Str } from '@/common/decorator/field.decorator';
 
 export class LoginDto {
-  @Email() email!: string;
+  @Str() username!: string;
   @Str() password!: string;
 }
 

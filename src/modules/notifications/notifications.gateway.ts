@@ -65,8 +65,7 @@ const colors = {
 
 @WebSocketGateway({
   cors: {
-    origin:
-      process.env.NODE_ENV === 'production' ? process.env.FRONTEND_URL : '*',
+    origin: '*',
     credentials: true,
   },
   namespace: '/notifications',

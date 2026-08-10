@@ -1,3 +1,4 @@
+import { logger } from '@/common/logger/logger.service';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -19,7 +20,7 @@ export class AuthService {
   ) {}
 
   async login(loginDto: LoginDto): Promise<LoginResponse> {
-    const user = await this.usersService.findByEmail(loginDto.email);
+    const user = await this.usersService.findByUsername(loginDto.username);
 
     if (!user || !(await bcrypt.compare(loginDto.password, user.password))) {
       throw new UnauthorizedException('Invalid credentials');

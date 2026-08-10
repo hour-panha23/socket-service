@@ -54,8 +54,8 @@ export class UsersService {
     return { message: 'User deleted successfully' };
   }
 
-  async findByEmail(email: string) {
-    return this.usersRepo.findByEmail(email);
+  async findByUsername(username: string) {
+    return this.usersRepo.findByUsername(username);
   }
 
   async findById(id: string) {
