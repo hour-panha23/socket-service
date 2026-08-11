@@ -1,16 +1,11 @@
 import { HttpService } from '@nestjs/axios';
 import {
-  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { HttpAdapterHost } from '@nestjs/core';
-import { IncomingMessage } from 'http';
 import { firstValueFrom } from 'rxjs';
-import { Duplex } from 'stream';
-import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
 import { DeviceService } from './modules/device/device.service';
 import { NotificationsService } from './modules/notifications/notifications.service';
@@ -40,7 +35,6 @@ const MULTI_INSTANCE_DEPLOYMENT =
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
-  private upgradeHandler?: (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
   // Local deduplication & route/user memory caches to eliminate Redis roundtrips
   private readonly localDedupeCache = new Map<string, number>();
@@ -64,8 +58,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     private readonly devicesService: DeviceService,
     private readonly redisService: RedisService,
     private readonly httpService: HttpService,
-    @Inject(HttpAdapterHost)
-    private readonly httpAdapterHost: HttpAdapterHost,
   ) { }
 
   onModuleInit() {
@@ -83,30 +75,17 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       }
     }, 60_000);
 
-    // Initialize standalone ws server (does NOT automatically hook httpServer upgrade events)
-    this.wss = new WebSocketServer({ noServer: true });
-
-    const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
-
-    // Custom HTTP Upgrade Router to selectively handle /pub/chat and pass everything else to Socket.IO
-    this.upgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-      const { pathname } = parse(req.url || '');
-
-      if (pathname === '/pub/chat' || pathname === '/pub/chat/') {
-        this.wss.handleUpgrade(req, socket, head, (ws) => {
-          this.wss.emit('connection', ws, req);
-        });
-      }
-    };
-
-    httpServer.on('upgrade', this.upgradeHandler);
+    this.wss = new WebSocketServer({
+      port: 8088,
+      path: '/pub/chat',
+    });
 
     this.wss.on('error', (err) => {
       this.logger.error(`WebSocketServer error: ${err.message}`, err.stack);
     });
 
     this.logger.log(
-      'AiFace Hardware WebSocket Server attached to HTTP server upgrade router (/pub/chat)',
+      'AiFace Hardware WebSocket Server initialized on port 8088 (/pub/chat)',
     );
 
     this.wss.on('connection', (ws: WebSocket, req) => {
@@ -493,15 +472,9 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
-    if (this.upgradeHandler) {
-      const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
-      httpServer?.removeListener('upgrade', this.upgradeHandler);
-    }
-
     if (this.dedupeCleanupInterval) {
       clearInterval(this.dedupeCleanupInterval);
     }
-
     if (this.wss) {
       this.wss.close();
     }

@@ -9,6 +9,7 @@ export class LoggerService {
   private useJson: boolean;
   private maxSizeBytes?: number;
   private retentionDays?: number;
+  private isDevelopment: boolean;
 
   private writeQueue: Array<{ filename: string; content: string }> = [];
   private processing = false;
@@ -21,11 +22,14 @@ export class LoggerService {
     }
 
     const env = process.env;
+    this.isDevelopment = env.NODE_ENV !== 'production';
+
     this.logDir =
       env.LOG_DIR && env.LOG_DIR.trim().length > 0
         ? env.LOG_DIR
         : path.join(process.cwd(), 'logs');
-    const level = (env.LOG_LEVEL || 'info').toLowerCase();
+
+    const level = (env.LOG_LEVEL || (this.isDevelopment ? 'debug' : 'info')).toLowerCase();
     this.minLevel = this.levelToNum(level);
     this.useJson = (env.LOG_FORMAT || '').toLowerCase() === 'json';
     const maxMb = Number(env.LOG_MAX_SIZE_MB);
@@ -42,10 +46,6 @@ export class LoggerService {
     if (this.retentionDays) {
       this.cleanupOldFiles().catch(() => void 0);
     }
-    // Debug: Log initialization details
-    // console.log(
-    //   `[LoggerService] Initialized - Level: ${level} (${this.minLevel}), Dev: ${this.isDevelopment}, JSON: ${this.useJson}`,
-    // );
   }
 
   private ensureLogDirectoryExists() {
@@ -108,9 +108,9 @@ export class LoggerService {
       } else if (typeof cleanedMeta === 'object') {
         const displayMeta = callerInfo
           ? {
-              ...this.maskSensitive(cleanedMeta),
-              caller: { file: callerInfo },
-            }
+            ...this.maskSensitive(cleanedMeta),
+            caller: { file: callerInfo },
+          }
           : this.maskSensitive(cleanedMeta);
         logEntry += `\nMeta: ${this.safeStringify(displayMeta, 2)}`;
       } else {
@@ -269,6 +269,9 @@ export class LoggerService {
   }
 
   private shouldLog(level: 'error' | 'warn' | 'info' | 'debug'): boolean {
+    if (level === 'debug' && !this.isDevelopment) {
+      return false;
+    }
     return this.levelToNum(level) <= this.minLevel;
   }
 
@@ -294,7 +297,6 @@ export class LoggerService {
         parameters?: unknown;
       };
 
-      // Combine query and message if query exists
       let errorField = pg.message;
       if (pg.query) {
         errorField = `${pg.query} - ${pg.message}`;
@@ -363,12 +365,6 @@ export class LoggerService {
     };
   }
 
-  // private parseBool(val: string | undefined, fallback = false): boolean {
-  //   if (val === undefined) return fallback;
-  //   const v = val.toLowerCase().trim();
-  //   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
-  // }
-
   private safeStringify(obj: unknown, space?: number): string {
     const seen = new WeakSet<object>();
     return JSON.stringify(
@@ -430,16 +426,12 @@ export class LoggerService {
     if (!stack) return null;
 
     const lines = stack.split('\n');
-    // Skip the first few lines (Error, getCallerInfo, and the calling method)
-    // Typically: 0=Error, 1=getCallerInfo, 2=error/warn/info/debug, 3=actual caller
     for (let i = 3; i < lines.length; i++) {
       const line = lines[i];
-      // Match file paths in the stack trace
       const match = line.match(/at\s+(?:.*?\s+)?\(?(.+?):(\d+):(\d+)\)?/);
       if (match) {
         const filePath = match[1];
         const lineNum = match[2];
-        // Skip logger service itself
         if (!filePath.includes('logger.service')) {
           return `${filePath}:${lineNum}`;
         }
@@ -500,8 +492,9 @@ export class LoggerService {
   }
 
   debug(message: string, meta?: any) {
-    const isSocket = this.isSocketLog(message, meta);
-    if (!this.shouldLog('debug') && !isSocket) return;
+    if (!this.isDevelopment) return; // Dev-only guard
+    if (!this.shouldLog('debug')) return;
+
     const enrichedMeta = this.buildEnrichedMeta(meta);
     const logEntry = this.formatLog('debug', message, enrichedMeta);
     for (const f of this.getTargetFilenames('debug', message, enrichedMeta)) {
@@ -510,27 +503,13 @@ export class LoggerService {
     console.debug(`[DEBUG] ${message}`, enrichedMeta || '');
   }
 
-  // socket(message: string, meta?: any) {
-  //   // We force it to 'info' level logic, but ensure it targets socket.log
-  //   const logEntry = this.formatLog('info', message, meta);
-
-  //   // Get standard targets (info.log) + explicitly add socket.log
-  //   const targets = new Set(this.getTargetFilenames('info', message, meta));
-  //   targets.add('socket.log');
-
-  //   for (const f of targets) {
-  //     this.enqueueWrite(f, logEntry);
-  //   }
-  //   console.info(`[SOCKET] ${message}`, meta || '');
-  // }
-
   socket(message: string, meta?: any) {
+    if (!this.isDevelopment) return; // Dev-only guard
+
     const enrichedMeta = this.buildEnrichedMeta(meta);
     const logEntry = this.formatLog('info', message, enrichedMeta);
 
-    // Direct write to the specific file
     this.enqueueWrite('socket.log', logEntry);
-
     console.info(`[SOCKET] ${message}`, enrichedMeta || '');
   }
 
@@ -573,7 +552,6 @@ export class LoggerService {
     const errorCode =
       typeof normalized.code === 'string' ? normalized.code : 'UNKNOWN_CODE';
 
-    // Identify if it's a unique constraint violation (Postgres 23505)
     const isUniqueViolation = errorCode === '23505';
     const logPrefix = isUniqueViolation
       ? 'Database Unique Violation'
@@ -590,13 +568,11 @@ export class LoggerService {
       timestamp: new Date().toISOString(),
     };
 
-    // Extract error message from normalized for the log message
     const errorMessage =
       typeof normalized.error === 'string'
         ? normalized.error
         : 'Unknown database error';
 
-    // Use a more descriptive message for the log file
     this.error(
       `${logPrefix} in ${operation} on ${table || 'unknown table'}: ${errorMessage}`,
       errorData,

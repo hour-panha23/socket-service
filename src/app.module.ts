@@ -27,4 +27,4 @@ import { RedisModule } from './services/redis/redis.module';
   ],
   providers: [HardwareGateway],
 })
-export class AppModule {}
+export class AppModule { }

@@ -120,12 +120,12 @@ export function verifyUserHmacSignature(
     const normalizedProvidedHex = signatureHex?.trim().toLowerCase() || '';
     const providedBuffer = Buffer.from(normalizedProvidedHex, 'hex');
 
-    // logger.debug(
-    //   `[HMAC USER Debug] Inputs: ${JSON.stringify({ projectId, timestamp, appId, userId })}`,
-    // );
-    // logger.debug(`[HMAC USER Debug] Constructed Message Payload: "${message}"`);
-    // logger.debug(`[HMAC USER Debug] Expected Hex: ${expectedHex}`);
-    // logger.debug(`[HMAC USER Debug] Provided Hex: ${normalizedProvidedHex}`);
+    logger.debug(
+      `[HMAC USER Debug] Inputs: ${JSON.stringify({ projectId, timestamp, appId, userId })}`,
+    );
+    logger.debug(`[HMAC USER Debug] Constructed Message Payload: "${message}"`);
+    logger.debug(`[HMAC USER Debug] Expected Hex: ${expectedHex}`);
+    logger.debug(`[HMAC USER Debug] Provided Hex: ${normalizedProvidedHex}`);
 
     // Buffer length check
     if (expectedBuffer.length !== providedBuffer.length) {

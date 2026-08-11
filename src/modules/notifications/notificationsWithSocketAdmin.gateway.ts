@@ -10,7 +10,8 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { DefaultEventsMap, Namespace, Socket } from 'socket.io';
+import { instrument } from '@socket.io/admin-ui'; // <--- IMPORT THE REAL INSTRUMENT PACKAGE
+import { DefaultEventsMap, Namespace, Server, Socket } from 'socket.io';
 import { LoggerService } from '../../common/logger/logger.service';
 import { NotificationsService } from './notifications.service';
 
@@ -39,12 +40,6 @@ export type TypedSocket = Socket<
   CustomSocketData
 >;
 
-interface AppHandshakeAuth {
-  app_id: string;
-  timestamp: string;
-  signature: string;
-}
-
 interface RoomDto {
   projectId: string;
   appId: string;
@@ -65,11 +60,11 @@ const colors = {
 
 @WebSocketGateway({
   cors: {
-    origin: '*',
+    origin: ['https://admin.socket.io', 'http://localhost:3000'],
     credentials: true,
   },
   namespace: '/notifications',
-  transports: ["polling",'websocket'],
+  transports: ['polling', 'websocket'], // Allow both transports for smooth handshakes
 })
 export class NotificationsGateway
   implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
@@ -85,11 +80,25 @@ export class NotificationsGateway
   ) {}
 
   afterInit(server: Namespace) {
+    // Access the root Socket.IO Server engine instance
+    const rootServer: Server = (server as any).server || server;
+
+    instrument(rootServer, {
+      auth: false,
+      mode: 'development',
+    });
+
     this.notificationsService.setServer(server);
     this.logger.debug(`${colors.green('✔')} NotificationsGateway initialized`);
+    this.logger.debug(`admin url : ${colors.blue('https://admin.socket.io')}`);
   }
 
   async handleConnection(client: TypedSocket) {
+    // 1. Bypass auth check if client is connecting to the Admin UI namespace
+    if (client.nsp.name === '/admin') {
+      return;
+    }
+
     this.logger.debug(
       `[WS Connect] Socket ${colors.magenta(client.id)} initiating transport ${colors.cyan(client.conn.transport.name)}`,
       { clientId: client.id, transport: client.conn.transport.name },
@@ -117,22 +126,7 @@ export class NotificationsGateway
       auth.signature || headers['x-signature'] || query.signature;
     const userId = auth.user_id || headers['x-user-id'] || query.user_id;
 
-    this.logger.debug(
-      `[WS Auth Extraction] Credentials for ${colors.magenta(client.id)} (proId: ${colors.yellow(proId ?? 'N/A')})`,
-      {
-        clientId: client.id,
-        proId,
-        timestamp,
-        signature: signature ? `${signature.slice(0, 8)}...` : undefined,
-        sources: {
-          authKeys: Object.keys(auth),
-          headerKeys: Object.keys(headers),
-          queryKeys: Object.keys(query),
-        },
-      },
-    );
-
-    // Step 1: Missing Credentials Check
+    // Missing Credentials Check
     if (!proId || !timestamp || !signature) {
       this.logger.error(
         `${colors.red('✘')} [WS Auth Failed] Missing credentials for ${colors.magenta(client.id)}`,
@@ -147,7 +141,7 @@ export class NotificationsGateway
       return;
     }
 
-    // Step 2: Timestamp Freshness Check
+    // Timestamp Freshness Check
     const isFresh = isTimestampFresh(timestamp);
     if (!isFresh) {
       this.logger.error(
@@ -163,16 +157,11 @@ export class NotificationsGateway
       return;
     }
 
-    // Step 3: Admin Auth Checks
+    // Admin Auth Checks
     const adminAppId = this.configService.get<string>('ADMIN_APP_ID');
     const adminSecretKey = this.configService.get<string>('ADMIN_SECRET_KEY');
 
     if (adminAppId && adminSecretKey && proId === '1') {
-      this.logger.debug(
-        `[WS Auth] Checking admin credentials for ${colors.magenta(client.id)}`,
-        { clientId: client.id, adminAppId },
-      );
-
       const message = buildSignedMessage(proId, timestamp);
       const isValidAdmin = verifyHmacSignature(
         message,
@@ -183,7 +172,6 @@ export class NotificationsGateway
       if (!isValidAdmin) {
         this.logger.error(
           `${colors.red('✘')} [WS Auth Failed] Admin signature mismatch for ${colors.magenta(client.id)}`,
-          { clientId: client.id, app_id, signedMessage: message },
         );
         client.disconnect(true);
         return;
@@ -196,23 +184,11 @@ export class NotificationsGateway
       };
       await client.join(`service:${proId}`);
 
-      this.logger.debug(
-        `${colors.green('✔')} [WS Auth Success] Admin ${colors.magenta(client.id)} -> ${colors.cyan(`service:${proId}`)}`,
-        { clientId: client.id, room: `service:${proId}` },
-      );
-
       this.emitConnectEvent(client);
       return;
     }
 
-    // Step 4: Standard App Auth Check
-    this.logger.debug(
-      `[WS Auth] Verifying standard signature for ${colors.magenta(client.id)}`,
-      { clientId: client.id, proId },
-    );
-
-    const startTime = Date.now();
-
+    // Standard App Auth Check
     try {
       const app = await this.appsService.verifySignature(
         proId,
@@ -225,7 +201,6 @@ export class NotificationsGateway
       if (!app) {
         this.logger.error(
           `${colors.red('✘')} [WS Auth Failed] Invalid signature or app missing for ${colors.magenta(client.id)}`,
-          { clientId: client.id, app_id, proId, userId },
         );
         client.disconnect(true);
         return;
@@ -240,29 +215,21 @@ export class NotificationsGateway
 
       if (proId && userId) {
         await client.join(`user:${proId}:${userId}`);
-        this.logger.debug(
-          `Socket ${colors.magenta(client.id)} auto-joined channel ${colors.cyan(`user:${proId}:${userId}`)}`,
-          { proId, userId },
-        );
       }
 
       this.emitConnectEvent(client);
     } catch (error: any) {
-      const durationMs = Date.now() - startTime;
       this.logger.error(
-        `${colors.red('✘')} [WS Auth Exception] Crash in verifySignature after ${colors.yellow(`${durationMs}ms`)} for ${colors.magenta(client.id)}`,
-        {
-          clientId: client.id,
-          app_id,
-          errorMessage: error?.message || String(error),
-          errorStack: error?.stack,
-        },
+        `${colors.red('✘')} [WS Auth Exception] Crash in verifySignature for ${colors.magenta(client.id)}`,
+        { errorMessage: error?.message || String(error) },
       );
       client.disconnect(true);
     }
   }
 
   handleDisconnect(client: TypedSocket) {
+    if (client.nsp.name === '/admin') return;
+
     this.logger.debug(
       `${colors.yellow('⚡')} Client disconnected: ${colors.magenta(client.id)}`,
     );
@@ -295,15 +262,6 @@ export class NotificationsGateway
 
     await client.join([projectRoom, appRoom, specificRoom]);
 
-    this.logger.debug(
-      `Socket ${colors.magenta(client.id)} joined rooms: [${colors.cyan(projectRoom)}, ${colors.cyan(appRoom)}, ${colors.cyan(specificRoom)}]`,
-      {
-        clientId: client.id,
-        rooms: [projectRoom, appRoom, specificRoom],
-        dto: data,
-      },
-    );
-
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'join',
       clientId: client.id,
@@ -323,10 +281,6 @@ export class NotificationsGateway
   ) {
     const specificRoom = `project:${data.projectId}:app:${data.appId}:room:${data.roomId}`;
     await client.leave(specificRoom);
-
-    this.logger.debug(
-      `Socket ${colors.magenta(client.id)} left room ${colors.cyan(specificRoom)}`,
-    );
 
     this.server.to('admin:monitor').emit('admin:room_event', {
       type: 'leave',
@@ -349,10 +303,6 @@ export class NotificationsGateway
     @MessageBody() data: { userId: string },
   ) {
     await client.join(`user:${data.userId}`);
-    this.logger.debug(
-      `Socket ${colors.magenta(client.id)} joined user channel ${colors.cyan(`user:${data.userId}`)}`,
-      { userId: data.userId },
-    );
     return {
       event: 'user_channel_joined',
       data: { status: 'success', userId: data.userId },
@@ -363,9 +313,6 @@ export class NotificationsGateway
   @SubscribeMessage('admin:subscribe')
   async handleAdminSubscribe(@ConnectedSocket() client: TypedSocket) {
     await client.join('admin:monitor');
-    this.logger.debug(
-      `Client ${colors.magenta(client.id)} subscribed to ${colors.cyan('admin:monitor')}`,
-    );
     return { event: 'admin:subscribed', data: { status: 'ok' } };
   }
 
@@ -373,9 +320,6 @@ export class NotificationsGateway
   @SubscribeMessage('admin:unsubscribe')
   async handleAdminUnsubscribe(@ConnectedSocket() client: TypedSocket) {
     await client.leave('admin:monitor');
-    this.logger.debug(
-      `Client ${colors.magenta(client.id)} unsubscribed from ${colors.cyan('admin:monitor')}`,
-    );
     return { event: 'admin:unsubscribed', data: { status: 'ok' } };
   }
 }

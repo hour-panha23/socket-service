@@ -1,43 +1,62 @@
-import { ValidationPipe } from '@nestjs/common';
+// import { ValidationPipe } from '@nestjs/common';
+// import { NestFactory } from '@nestjs/core';
+// import cookieParser from 'cookie-parser';
+// import { AppModule } from './app.module';
+// import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+// import { LoggerService } from './common/logger/logger.service';
+
+// async function bootstrap() {
+//   const port = process.env.PORT || 3000;
+//   const app = await NestFactory.create(AppModule, {
+//     // logger: ['error', 'warn', ],
+//     logger: ['error', 'warn', 'debug', "log"],
+//     rawBody: true,
+//   });
+
+//   const loggerService = app.get(LoggerService);
+
+//   app.useGlobalPipes(
+//     new ValidationPipe({
+//       whitelist: true,
+//       forbidNonWhitelisted: false,
+//       transform: true,
+//     }),
+//   );
+//   app.use(cookieParser());
+//   app.useGlobalFilters(new AllExceptionsFilter(loggerService));
+
+//   app.enableCors({
+//     origin: true,
+//     credentials: true,
+//   });
+
+//   // ------------------------------------------------------------------
+//   // TEMPORARILY DISABLED: Redis Adapter
+//   // ------------------------------------------------------------------
+//   // const redisAdapter = new RedisIoAdapter(app);
+//   // await redisAdapter.connectToRedis();
+//   // app.useWebSocketAdapter(redisAdapter);
+
+//   await app.listen(port, '0.0.0.0');
+//   console.log(`🚀 Application is running on: http://localhost:${port}`);
+// }
+// bootstrap();
+
+
+// main.ts
 import { NestFactory } from '@nestjs/core';
-import cookieParser from 'cookie-parser';
 import { AppModule } from './app.module';
-import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { LoggerService } from './common/logger/logger.service';
 
 async function bootstrap() {
-  const port = process.env.PORT || 3000;
+  const isDev = process.env.NODE_ENV !== 'production';
+
   const app = await NestFactory.create(AppModule, {
-    // logger: ['error', 'warn', ],
-    logger: ['error', 'warn', 'debug'],
-    rawBody: true,
+    // Only include 'debug' and 'verbose' in development
+    logger: isDev
+      ? ['log', 'error', 'warn', 'debug', 'verbose']
+      : ['log', 'error', 'warn'],
   });
 
-  const loggerService = app.get(LoggerService);
-
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: false,
-      transform: true,
-    }),
-  );
-  app.use(cookieParser());
-  app.useGlobalFilters(new AllExceptionsFilter(loggerService));
-
-  app.enableCors({
-    origin: true,
-    credentials: true,
-  });
-
-  // ------------------------------------------------------------------
-  // TEMPORARILY DISABLED: Redis Adapter
-  // ------------------------------------------------------------------
-  // const redisAdapter = new RedisIoAdapter(app);
-  // await redisAdapter.connectToRedis();
-  // app.useWebSocketAdapter(redisAdapter);
-
-  await app.listen(port, '0.0.0.0');
-  console.log(`🚀 Application is running on: http://localhost:${port}`);
+  await app.listen(process.env.PORT ?? 3000);
 }
 bootstrap();

@@ -135,13 +135,13 @@ export class ProjectService {
     appId?: string,
     userId?: string,
   ) {
-    // logger.debug(`[VerifySignature Start] Validating signature`, {
-    //   projectId,
-    //   timestamp,
-    //   appId,
-    //   userId,
-    //   signatureHex: signatureHex ? `${signatureHex.slice(0, 8)}...` : undefined,
-    // });
+    logger.debug(`[VerifySignature Start] Validating signature`, {
+      projectId,
+      timestamp,
+      appId,
+      userId,
+      signatureHex: signatureHex ? `${signatureHex.slice(0, 8)}...` : undefined,
+    });
 
     // Step 1: Check Timestamp Freshness
     if (!isTimestampFresh(timestamp)) {
@@ -175,12 +175,12 @@ export class ProjectService {
       return null;
     }
 
-    // logger.debug(`[VerifySignature] Project found in DB`, {
-    //   projectId: project.project_id,
-    //   projectName: project.name,
-    //   dbDurationMs: dbDuration,
-    //   hasSecretKey: !!project.secret_key,
-    // });
+    logger.debug(`[VerifySignature] Project found in DB`, {
+      projectId: project.project_id,
+      projectName: project.name,
+      dbDurationMs: dbDuration,
+      hasSecretKey: !!project.secret_key,
+    });
 
     // Step 3: Signature Verification — branch on whether this is a user-scoped signature
     const isValid =
