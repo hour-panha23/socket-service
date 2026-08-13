@@ -295,19 +295,15 @@ export class NotificationsService {
       return result;
     }
 
-    let emitter;
+    // Handle direct socket targeted emission vs full room emission
     if (selfEmit && senderSocketId) {
-      // Direct emit to sender socket only
-      emitter = this.server.to(senderSocketId);
+      this.server.to(senderSocketId).emit(rawEvent, payload);
       result.recipientCount = 1;
     } else {
+      this.server.to(room).emit(rawEvent, payload);
       result.recipientCount = this.roomSize(room);
-      emitter = senderSocketId
-        ? this.server.to(room).except(senderSocketId)
-        : this.server.to(room);
     }
 
-    emitter.emit(rawEvent, payload);
     this.logToAdmin(result, payload);
     void this.deliverWebhook(target, rawEvent, payload);
 

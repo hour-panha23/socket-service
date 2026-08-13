@@ -8,7 +8,6 @@ import { ProjectModule } from '../project/project.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsService } from './notifications.service';
-import { SocketMonitorController } from './socket-monitor.controller';
 import { WsAppAuthGuard } from './ws-auth.guard';
 
 @Module({
@@ -20,7 +19,7 @@ import { WsAppAuthGuard } from './ws-auth.guard';
       name: 'webhook-retry',
     }),
   ],
-  controllers: [NotificationsController, SocketMonitorController],
+  controllers: [NotificationsController],
   providers: [
     NotificationsGateway,
     NotificationsService,
@@ -29,4 +28,4 @@ import { WsAppAuthGuard } from './ws-auth.guard';
   ],
   exports: [NotificationsGateway, NotificationsService],
 })
-export class NotificationsModule {}
+export class NotificationsModule { }
