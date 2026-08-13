@@ -11,13 +11,27 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { Request } from 'express';
+import { IS_PUBLIC_KEY } from '../decorator/public.decorator';
 
 @Injectable()
 export class HmacAuthGuard implements CanActivate {
-  constructor(private readonly projectsService: ProjectService) {}
+  constructor(private readonly projectsService: ProjectService,
+    private reflector: Reflector
+  ) { }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+
+    if (isPublic) {
+      return true; // Bypass authentication
+    }
+
     const req = context.switchToHttp().getRequest<Request>();
 
     const projectId = req.header('x-project-id');
