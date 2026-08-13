@@ -27,11 +27,12 @@ export interface WebhookRetryJob {
 export class NotificationsService {
   private server!: Namespace;
 
+
   constructor(
     private readonly projectRepo: ProjectRepository,
     @InjectQueue('webhook-retry')
     private readonly webhookQueue: Queue<WebhookRetryJob>,
-  ) {}
+  ) { }
   setServer(server: Namespace) {
     this.server = server;
   }
@@ -570,5 +571,9 @@ export class NotificationsService {
         },
       );
     }
+  }
+
+  isSocketOnline(): boolean {
+    return Boolean(this.server && this.server.server?.engine);
   }
 }
