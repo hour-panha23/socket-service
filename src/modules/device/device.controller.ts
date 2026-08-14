@@ -7,8 +7,9 @@ import {
   HttpStatus,
   Param,
   Post,
+  Put,
   UseGuards,
-  UseInterceptors,
+  UseInterceptors
 } from '@nestjs/common';
 
 import { JwtAuthGuard } from '@/common/guard/jwt-auth.guard';
@@ -23,7 +24,7 @@ import { Device } from './device.types';
 @UseGuards(JwtAuthGuard)
 @UseInterceptors(TransformInterceptor)
 export class DeviceController {
-  constructor(private readonly deviceService: DeviceService) {}
+  constructor(private readonly deviceService: DeviceService) { }
 
   @HttpCode(HttpStatus.OK)
   @Post('create')
@@ -36,11 +37,21 @@ export class DeviceController {
   }
 
   @HttpCode(HttpStatus.OK)
-  @Post('update/:id')
+  @Put('update/:id')
   update(@Param('id') id: string, @Body() dto: UpdateDeviceDto) {
     try {
       return this.deviceService.update(id, dto);
-    } catch {
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message === "Device not found") {
+          return {
+            status_code: HttpStatus.NOT_FOUND,
+            result: false,
+            error: "Device Not Found",
+            message: "Device Not Found"
+          };
+        }
+      }
       return exceptionResponse;
     }
   }

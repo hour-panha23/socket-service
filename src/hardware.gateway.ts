@@ -21,7 +21,7 @@ interface DeviceRoute {
   appId: string;
   roomId: string;
   event: string;
-  webhook?: string;
+  backendUrl?: string;
   isBlocked?: boolean;
 }
 
@@ -216,7 +216,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         appId: data.app_id,
         roomId: data.room,
         event: data.event,
-        webhook: data.webhook,
+        backendUrl: data.webhook,
         isBlocked: data.is_blocked ?? false,
       };
 
@@ -363,6 +363,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           current_date,
           present_time.substring(0, 5),
           terminalUserName,
+          route.backendUrl,
         );
         laravelMs = Date.now() - laravelStart;
 
@@ -462,19 +463,29 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   private resolveScanTime(rawTime?: string): string {
+    this.logger.log('Raw Time Scan', rawTime);
+
     if (!rawTime) {
       return this.nowFormatted();
     }
-    const isoCandidate = /Z|[+-]\d{2}:?\d{2}$/.test(rawTime)
-      ? rawTime
-      : `${rawTime.replace(' ', 'T')}Z`;
+
+    // Check if string already contains a timezone offset (Z or +/-HH:mm)
+    const hasTimezone = /Z|[+-]\d{2}:?\d{2}$/i.test(rawTime);
+
+    // Replace space with 'T' for ISO-8601 compliance.
+    // DO NOT append 'Z' if no timezone is present; parse as naive/local time.
+    const formattedTime = rawTime.replace(' ', 'T');
+    const isoCandidate = hasTimezone ? rawTime : formattedTime;
+
     const parsed = new Date(isoCandidate);
+
     if (isNaN(parsed.getTime())) {
       this.logger.warn(
         `Unparseable record.time "${rawTime}", falling back to now()`,
       );
       return this.nowFormatted();
     }
+
     return this.toLocalString(parsed);
   }
 
@@ -513,11 +524,13 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     currentDate: string,
     presentTime: string,
     userName: string = 'Unknown User',
+    backendUrl?: string,
   ): Promise<UserAccessData | null> {
     try {
       const laravelUrl =
+        backendUrl ||
         process.env.LARAVEL_API_URL ||
-        'https://aghast-neutron-slot.ngrok-free.dev';
+        'https://aghast-neutron-slot.ngrok-free.dev';;
 
       const requestBody = {
         current_date: currentDate,
@@ -533,7 +546,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       const httpStart = Date.now();
       const response = await firstValueFrom(
         this.httpService.post(
-          `${laravelUrl}/api/student/attendance/access-scan`,
+          `${laravelUrl}/integration/attendance/scan`,
           requestBody,
           {
             headers: {

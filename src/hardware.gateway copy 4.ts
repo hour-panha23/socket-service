@@ -1,14 +1,19 @@
 import { HttpService } from '@nestjs/axios';
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
+import { HttpAdapterHost } from '@nestjs/core';
+import { IncomingMessage } from 'http';
 import { firstValueFrom } from 'rxjs';
+import { Duplex } from 'stream';
+import { parse } from 'url';
 import { WebSocket, WebSocketServer } from 'ws';
-import { DeviceService } from './modules/device/device.service'; // Adjust path if needed[cite: 1]
-import { NotificationsService } from './modules/notifications/notifications.service'; // Adjust path if needed[cite: 1]
+import { DeviceService } from './modules/device/device.service';
+import { NotificationsService } from './modules/notifications/notifications.service';
 import { RedisService } from './services/redis/redis.service';
 
 interface DeviceRoute {
@@ -16,22 +21,18 @@ interface DeviceRoute {
   appId: string;
   roomId: string;
   event: string;
-  webhook?: string;
+  backendUrl?: string;
   isBlocked?: boolean;
 }
 
-const DUPLICATE_SCAN_WINDOW_SEC = 3; // 3 seconds deduplication window
+interface UserAccessData {
+  user_id: number;
+  name: string;
+  access: number;
+  reason?: string;
+}
 
-// This gateway holds one persistent WebSocket connection per device
-// on a single Node process (confirmed: dev runs as one process alongside the
-// Socket.IO service). In that topology, the local in-memory dedupe Map is
-// already authoritative — there's no second process that could've missed a
-// scan this one saw — so the Redis SET NX backstop below is pure overhead
-// (~170-250ms per scan in testing) and is skipped by default.
-// Flip HARDWARE_GATEWAY_MULTI_INSTANCE=true (env var) if this ever runs as
-// more than one process/pod behind a load balancer — at that point the
-// Redis backstop becomes necessary again, since each instance's local Map
-// only knows what it personally has seen.
+const DUPLICATE_SCAN_WINDOW_SEC = 3;
 const MULTI_INSTANCE_DEPLOYMENT =
   process.env.HARDWARE_GATEWAY_MULTI_INSTANCE === 'true';
 
@@ -39,57 +40,36 @@ const MULTI_INSTANCE_DEPLOYMENT =
 export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(HardwareGateway.name);
   private wss!: WebSocketServer;
+  private upgradeHandler?: (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
 
-  // Local in-process dedupe cache: scanKey ("sn:userId") -> expiry epoch ms.
-  // First line of defense against duplicate scans, avoiding a Redis
-  // round-trip entirely for the common single-instance case. Redis dedupe
-  // remains the source of truth across multiple instances.
+  // Local deduplication & route/user memory caches to eliminate Redis roundtrips
   private readonly localDedupeCache = new Map<string, number>();
-  private dedupeCleanupInterval!: NodeJS.Timeout;
-
-  // Local in-process mirror of the Redis device-route cache. Route lookups
-  // hit Redis on every single scan (~200-400ms observed) despite the data
-  // being effectively static — this trades a bounded staleness window for
-  // eliminating that round-trip entirely on repeat scans.
-  // TRADE-OFF: blocking a device (isBlocked) or changing its room/project
-  // won't take effect on an already-running gateway process until this TTL
-  // expires, even after the Redis key is invalidated. 15s is a starting
-  // point — tighten it if immediate block-takes-effect is a hard requirement.
   private readonly localRouteCache = new Map<
     string,
     { route: DeviceRoute; expiry: number }
   >();
-  private static readonly LOCAL_ROUTE_TTL_MS = 15_000;
-
-  // Local in-process mirror of the Redis per-user access cache. `cacheRead`
-  // is the last Redis round-trip that's NEVER skipped (100-220ms every scan
-  // in your logs) — this removes it on repeat scans.
-  // TRADE-OFF, and this one is more sensitive than the route cache: this
-  // gates the actual allow/deny decision. If a student is deactivated or
-  // reassigned mid-day, an already-running gateway process keeps honoring
-  // the old decision for up to this TTL, even after Redis is updated.
-  // Starting at 15s to match the route cache — shrink this (or drop the
-  // local layer here entirely) if immediate revocation is a requirement.
   private readonly localUserAccessCache = new Map<
     string,
-    {
-      data: { user_id: number; name: string; access: number; reason?: string };
-      expiry: number;
-    }
+    { data: UserAccessData; expiry: number }
   >();
+
+  private static readonly LOCAL_ROUTE_TTL_MS = 15_000;
   private static readonly LOCAL_USER_ACCESS_TTL_MS = 15_000;
+  private static readonly LOCAL_OFFSET_MS = 7 * 60 * 60 * 1000; // UTC+7 offset
+
+  private dedupeCleanupInterval!: NodeJS.Timeout;
 
   constructor(
     private readonly notificationsService: NotificationsService,
     private readonly devicesService: DeviceService,
     private readonly redisService: RedisService,
     private readonly httpService: HttpService,
-  ) {}
+    @Inject(HttpAdapterHost)
+    private readonly httpAdapterHost: HttpAdapterHost,
+  ) { }
 
   onModuleInit() {
-    // Periodic sweep of the local dedupe cache — entries are checked
-    // lazily by expiry too, but this keeps the Map from growing unbounded
-    // across long-running processes with many distinct users/devices.
+    // Periodic garbage collection for in-memory local caches
     this.dedupeCleanupInterval = setInterval(() => {
       const now = Date.now();
       for (const [key, expiry] of this.localDedupeCache) {
@@ -103,17 +83,30 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       }
     }, 60_000);
 
-    this.wss = new WebSocketServer({
-      port: 8088,
-      path: '/pub/chat',
-    });
+    // Initialize standalone ws server (does NOT automatically hook httpServer upgrade events)
+    this.wss = new WebSocketServer({ noServer: true });
+
+    const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
+
+    // Custom HTTP Upgrade Router to selectively handle /pub/chat and pass everything else to Socket.IO
+    this.upgradeHandler = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+      const { pathname } = parse(req.url || '');
+
+      if (pathname === '/pub/chat' || pathname === '/pub/chat/') {
+        this.wss.handleUpgrade(req, socket, head, (ws) => {
+          this.wss.emit('connection', ws, req);
+        });
+      }
+    };
+
+    httpServer.on('upgrade', this.upgradeHandler);
 
     this.wss.on('error', (err) => {
       this.logger.error(`WebSocketServer error: ${err.message}`, err.stack);
     });
 
     this.logger.log(
-      'AiFace Hardware WebSocket Server initialized on port 8088 (/pub/chat)',
+      'AiFace Hardware WebSocket Server attached to HTTP server upgrade router (/pub/chat)',
     );
 
     this.wss.on('connection', (ws: WebSocket, req) => {
@@ -142,7 +135,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
         try {
           this.logger.debug(
-            `\n\n\n\n\n\n[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
+            `[cmd:${payload.cmd || payload.ret}] ${JSON.stringify(payload)}`,
           );
 
           if (payload.cmd === 'reg') {
@@ -161,9 +154,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           }
 
           if (payload.cmd === 'sendimage' || payload.cmd === 'senduserpic') {
-            this.logger.debug(
-              `Image payload received from sn=${payload.sn}, not yet handled`,
-            );
             this.safeSend(ws, { ret: payload.cmd, result: true });
             return;
           }
@@ -189,11 +179,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     return String(sn ?? '').toLowerCase();
   }
 
-  /**
-   * Returns true if `key` was seen within DUPLICATE_SCAN_WINDOW_SEC, without
-   * ever touching Redis. Marks the key as seen (with a fresh expiry) on a
-   * non-duplicate hit, same semantics as the Redis `SET NX EX` it fronts.
-   */
   private isDuplicateLocally(key: string): boolean {
     const now = Date.now();
     const expiry = this.localDedupeCache.get(key);
@@ -204,23 +189,15 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     return false;
   }
 
-  /**
-   * Infinite Device Route Cache.
-   * Stored in Redis with no expiration (ttl = 0).
-   * Invalidate via: await redisService.del(`device:route:${sn}`) when updating device settings.
-   */
   private async resolveDeviceRoute(rawSn: string): Promise<DeviceRoute | null> {
     const sn = this.normalizeSn(rawSn);
 
-    // Local fast-path — skip Redis entirely if we resolved this device recently.
     const local = this.localRouteCache.get(sn);
     if (local && local.expiry > Date.now()) {
       return local.route;
     }
 
     const cacheKey = `device:route:${sn}`;
-
-    // Check Redis Cache
     const cachedRoute = await this.redisService.get<DeviceRoute>(cacheKey);
     if (cachedRoute) {
       this.localRouteCache.set(sn, {
@@ -230,7 +207,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       return cachedRoute;
     }
 
-    // Query Database on Cache Miss
     try {
       const data = await this.devicesService.getProjectForDevice(sn);
       if (!data) return null;
@@ -240,11 +216,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         appId: data.app_id,
         roomId: data.room,
         event: data.event,
-        webhook: data.webhook,
+        backendUrl: data.webhook,
         isBlocked: data.is_blocked ?? false,
       };
 
-      // Store infinitely in Redis (ttl = 0)
       await this.redisService.set(cacheKey, route, 0);
       this.localRouteCache.set(sn, {
         route,
@@ -291,6 +266,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       nosendimage: false,
     });
   }
+
   private async handleScanLog(ws: WebSocket, payload: any) {
     const batchStart = Date.now();
     const sn = payload.sn;
@@ -323,25 +299,14 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         record.enrollid ?? record.userId ?? record.personId ?? record.customId;
       if (userId === undefined || userId === null) continue;
 
-      // 1. Local in-memory dedupe fast-path — zero network cost.
-      // We already have everything needed (device sn + userId) to know a
-      // scan is a duplicate without ever touching Redis. This catches the
-      // common case (device fires the same tap twice within ms) instantly;
-      // Redis below remains the cross-instance backstop for correctness if
-      // this gateway ever runs as more than one process/pod.
       const normalizedSn = this.normalizeSn(sn);
       const scanKey = `${normalizedSn}:${userId}`;
 
       if (this.isDuplicateLocally(scanKey)) {
-        this.logger.debug(
-          `Duplicate scan suppressed locally (no Redis call) for ${scanKey}`,
-        );
+        this.logger.debug(`Duplicate scan suppressed locally for ${scanKey}`);
         continue;
       }
 
-      // 1b. Redis Atomic Deduplication Lock (cross-instance backstop —
-      // only needed if this gateway runs as more than one process; see
-      // MULTI_INSTANCE_DEPLOYMENT comment at the top of the file)
       let dedupeMs = 0;
       if (MULTI_INSTANCE_DEPLOYMENT) {
         const dedupeStart = Date.now();
@@ -359,27 +324,18 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      // 2. Read User Cache — local fast-path first, then Redis
       const cacheReadStart = Date.now();
       const userKey = `device:user:${normalizedSn}:${userId}`;
 
-      let userCache: {
-        user_id: number;
-        name: string;
-        access: number;
-        reason?: string;
-      } | null = null;
+      let userCache: UserAccessData | null = null;
 
       const localUser = this.localUserAccessCache.get(userKey);
       if (localUser && localUser.expiry > Date.now()) {
         userCache = localUser.data;
       } else {
-        userCache = await this.redisService.getClient().get<{
-          user_id: number;
-          name: string;
-          access: number;
-          reason?: string;
-        }>(userKey);
+        userCache = await this.redisService
+          .getClient()
+          .get<UserAccessData>(userKey);
         if (userCache) {
           this.localUserAccessCache.set(userKey, {
             data: userCache,
@@ -389,15 +345,10 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       }
       const cacheReadMs = Date.now() - cacheReadStart;
 
-      // -------------------------------------------------------------------
-      // 3. FIRST SCAN FLOW: FETCH FROM LARAVEL BACKEND ON CACHE MISS
-      // -------------------------------------------------------------------
       let laravelMs = 0;
       if (!userCache) {
         const scannedAt = this.resolveScanTime(record.time);
         const [current_date, present_time] = this.splitDateTime(scannedAt);
-
-        // Fallback chain for user name from terminal payload
         const terminalUserName =
           record.name ?? record.userName ?? record.personName ?? 'Unknown User';
 
@@ -410,30 +361,25 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
           normalizedSn,
           String(userId),
           current_date,
-          present_time.substring(0, 5), // "09:31"
+          present_time.substring(0, 5),
           terminalUserName,
+          route.backendUrl,
         );
         laravelMs = Date.now() - laravelStart;
 
         if (userCache) {
-          // Cache in Redis: {"user_id": 2534, "name": "Chan Rith", "access": 1}
           await this.redisService.set(userKey, userCache, 0);
           this.localUserAccessCache.set(userKey, {
             data: userCache,
             expiry: Date.now() + HardwareGateway.LOCAL_USER_ACCESS_TTL_MS,
           });
-          this.logger.log(
-            `Cached user=${userId} (${userCache.name}) status (access=${userCache.access}) in Redis`,
-          );
         }
       }
 
-      // 4. Evaluate Access Permissions
       let isAllowed = false;
       let recordAccessReason: string | null = null;
 
       if (!userCache) {
-        // Laravel API unreachable or returned error
         access = 0;
         recordAccessReason = 'Access Denied: User Lookup Failed';
         accessReason = recordAccessReason;
@@ -442,8 +388,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         );
       } else if (Number(userCache.access) === 0) {
         access = 0;
-        // Prefer Laravel's specific reason (e.g. "unknown user") when it sent one;
-        // fall back to a generic message otherwise.
         recordAccessReason = userCache.reason
           ? `Access Denied: ${userCache.reason}`
           : 'Access Denied: User Deactivated or Unassigned';
@@ -455,11 +399,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         isAllowed = true;
       }
 
-      // Every scan gets broadcast to the room — allowed AND denied — so the
-      // connected app/dashboard screen shows a live status and the deny
-      // reason. (The AiFace terminal's own LCD has no confirmed way to
-      // render custom deny text on a result:true ack — see below — so this
-      // room broadcast is the "screen" this reason is actually meant for.)
       const scannedAt = this.resolveScanTime(record.time);
       const [current_date, present_time] = this.splitDateTime(scannedAt);
       const userName = userCache?.name ?? 'Unknown User';
@@ -468,12 +407,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         : record.inout === 1
           ? 'CHECK_OUT'
           : 'CHECK_IN';
-
-      this.logger.log(
-        isAllowed
-          ? `Scan Allowed: user=${userId} (${userName}) sn=${sn} -> room ${route.roomId} status ${status}`
-          : `Scan Denied: user=${userId} (${userName}) sn=${sn} -> room ${route.roomId} reason "${recordAccessReason}"`,
-      );
 
       const broadcastStart = Date.now();
       await this.notificationsService.sendToRoom(
@@ -497,7 +430,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       const recordMs = Date.now() - recordStart;
       this.logger.log(
         `[TIMING] user=${userId} sn=${sn} total=${recordMs}ms ` +
-          `(dedupe=${dedupeMs}ms cacheRead=${cacheReadMs}ms laravel=${laravelMs}ms broadcast=${broadcastMs}ms)`,
+        `(dedupe=${dedupeMs}ms cacheRead=${cacheReadMs}ms laravel=${laravelMs}ms broadcast=${broadcastMs}ms)`,
       );
     }
 
@@ -506,7 +439,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       `[TIMING] Batch sn=${sn} records=${records.length} routeMs=${routeMs} totalMs=${batchMs}`,
     );
 
-    // 6. Send Response to Terminal
     this.safeSend(ws, {
       ret: payload.cmd,
       sn,
@@ -519,9 +451,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // Cambodia is UTC+7 and does not observe DST, so a fixed offset is safe here.
-  private static readonly LOCAL_OFFSET_MS = 7 * 60 * 60 * 1000;
-
   private toLocalString(date: Date): string {
     return new Date(date.getTime() + HardwareGateway.LOCAL_OFFSET_MS)
       .toISOString()
@@ -533,12 +462,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
     return this.toLocalString(new Date());
   }
 
-  /**
-   * Resolves a scan timestamp to local (+7) "YYYY-MM-DD HH:mm:ss".
-   * The AiFace terminal's `record.time` is emitted in UTC (confirmed: device
-   * sent "09:46:01" for a scan the server logged at 16:46 local) — so it must
-   * be shifted +7 before use, same as the `now()` fallback.
-   */
   private resolveScanTime(rawTime?: string): string {
     if (!rawTime) {
       return this.nowFormatted();
@@ -571,38 +494,35 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleDestroy() {
+    if (this.upgradeHandler) {
+      const httpServer = this.httpAdapterHost.httpAdapter.getHttpServer();
+      httpServer?.removeListener('upgrade', this.upgradeHandler);
+    }
+
     if (this.dedupeCleanupInterval) {
       clearInterval(this.dedupeCleanupInterval);
     }
+
     if (this.wss) {
       this.wss.close();
     }
   }
-  /**
-   * Helper to POST scan info to Laravel Backend API
-   */
+
   private async fetchUserAccessFromLaravel(
     sn: string,
     userId: string,
     currentDate: string,
     presentTime: string,
     userName: string = 'Unknown User',
-  ): Promise<{
-    user_id: number;
-    name: string;
-    access: number;
-    reason?: string;
-  } | null> {
+    backendUrl?: string,
+  ): Promise<UserAccessData | null> {
     try {
       const laravelUrl =
-        process.env.LARAVEL_API_URL ||
-        'https://aghast-neutron-slot.ngrok-free.dev';
+        backendUrl
 
-      // Payload expected by Laravel
       const requestBody = {
         current_date: currentDate,
-        // present_time: presentTime,
-        present_time: '07:15',
+        present_time: presentTime,
         user_id: String(userId),
         user_name: userName,
       };
@@ -621,7 +541,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
               'Content-Type': 'application/json',
               'X-Internal-Secret': process.env.INTERNAL_API_SECRET || '',
             },
-            timeout: 3000, // 3s timeout
+            timeout: 3000,
           },
         ),
       );
@@ -629,7 +549,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         `[TIMING] Laravel HTTP round-trip user=${userId} sn=${sn} ${Date.now() - httpStart}ms`,
       );
 
-      // Verify response envelope and nested data object from Laravel
       const responseData = response?.data;
       if (
         !responseData ||
@@ -640,10 +559,9 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(
           `Unexpected API response format from Laravel for user=${userId} on sn=${sn}: ${JSON.stringify(responseData)}`,
         );
-        return null; // Return null so nothing gets cached on bad response
+        return null;
       }
 
-      // Extract access flag (and optional deny reason) from response.data.data
       const accessValue = Number(responseData.data.access);
       const reasonValue: string | undefined =
         typeof responseData.data.reason === 'string'
@@ -652,7 +570,7 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
 
       return {
         user_id: Number(userId),
-        name: userName, // Preserves "Chan Rith" from hardware payload
+        name: userName,
         access: accessValue,
         ...(reasonValue ? { reason: reasonValue } : {}),
       };
@@ -660,8 +578,6 @@ export class HardwareGateway implements OnModuleInit, OnModuleDestroy {
       this.logger.error(
         `Failed to fetch user access from Laravel for user=${userId} on sn=${sn}: ${(err as Error).message}`,
       );
-
-      // Return null so NO invalid/dummy user is saved to Redis on failure
       return null;
     }
   }

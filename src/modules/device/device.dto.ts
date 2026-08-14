@@ -12,6 +12,7 @@ export class CreateDeviceDto {
 }
 
 export class UpdateDeviceDto {
+  @Int() id!: number;
   @Str(true) device_name?: string;
   @Int(true) device_id?: number;
   @Str(true) device_serial?: string;
