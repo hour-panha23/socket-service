@@ -18,9 +18,56 @@ type AuthHandlers = {
   logout: () => Promise<void>;
 };
 
+function clearAuthSession() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("user");
+  document.cookie =
+    "access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie =
+    "refresh_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+}
+
+function getClientCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(
+    new RegExp("(^|;\\s*)" + name + "=([^;]+)"),
+  );
+  return match ? match[2] : null;
+}
+
 const defaultAuthHandlers: AuthHandlers = {
-  refreshAccessToken: async () => false,
-  logout: async () => {},
+  refreshAccessToken: async () => {
+    if (typeof window === "undefined") return false;
+    try {
+      const refreshToken = getClientCookie("refresh_token");
+      const res = await fetch("/api/proxy/auth/refresh", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(refreshToken ? { Authorization: `Bearer ${refreshToken}` } : {}),
+        },
+        body: JSON.stringify({ refreshToken }),
+        credentials: "include",
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data?.data?.access_token) {
+        const isSecure = window.location.protocol === "https:";
+        const secureFlag = isSecure ? "; Secure" : "";
+        document.cookie = `access_token=${data.data.access_token}; path=/; SameSite=Lax${secureFlag}`;
+        if (data.data.refresh_token) {
+          document.cookie = `refresh_token=${data.data.refresh_token}; path=/; SameSite=Lax${secureFlag}`;
+        }
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  },
+  logout: async () => {
+    clearAuthSession();
+  },
 };
 
 let authHandlers: AuthHandlers = defaultAuthHandlers;
@@ -110,6 +157,7 @@ function redirectToLoginOnce(reason: string) {
   if (currentPath === "/login") return;
 
   isRedirectingToLogin = true;
+  clearAuthSession();
   window.location.replace(`/login?reason=${encodeURIComponent(reason)}`);
 }
 

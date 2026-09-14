@@ -3,6 +3,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
+import { resolveSocketUrl } from "../lib/get-socket-url";
 import { buildAdminSignedAuth, buildSignedAuth } from "../lib/socket-auth";
 
 export interface ConnectSocketParams {
@@ -70,8 +71,7 @@ export function useSocket() {
             ? await buildAdminSignedAuth(appId, secret)
             : await buildSignedAuth(appId, secret);
 
-        const socketUrl =
-          process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3000";
+        const socketUrl = await resolveSocketUrl();
 
         // Gateway is declared with `namespace: '/notifications'` — must connect
         // to that path explicitly, connecting to the root '/' bypasses all

@@ -28,8 +28,10 @@ export default function LoginPage() {
       localStorage.setItem("user", JSON.stringify(response.data?.user));
 
       // 2. Save tokens in Cookies
-      document.cookie = `access_token=${response.data?.access_token}; path=/; SameSite=Lax; Secure`;
-      document.cookie = `refresh_token=${response.data?.refresh_token}; path=/; SameSite=Lax; Secure`;
+      const isSecure = typeof window !== "undefined" && window.location.protocol === "https:";
+      const secureFlag = isSecure ? "; Secure" : "";
+      document.cookie = `access_token=${response.data?.access_token}; path=/; SameSite=Lax${secureFlag}`;
+      document.cookie = `refresh_token=${response.data?.refresh_token}; path=/; SameSite=Lax${secureFlag}`;
 
       // Redirect to dashboard on success
       router.push("/monitoring");

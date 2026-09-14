@@ -9,6 +9,7 @@ const PUBLIC_ROUTES = ["/login", "/unauthorized"];
 const PUBLIC_API_ROUTES = [
   "/api/proxy/auth/login",
   "/api/proxy/auth/refresh-token",
+  "/api/proxy/auth/refresh",
   "/api/proxy/auth/logout",
   "/api/proxy/auth/register",
 ];
@@ -53,7 +54,8 @@ export async function proxy(request: NextRequest): Promise<Response> {
     const targetUrl = `${BACKEND_URL}${backendPath}${search}`;
 
     const headers = new Headers(request.headers);
-    if (accessToken) {
+    headers.delete("host");
+    if (accessToken && !pathname.startsWith("/api/proxy/auth/refresh")) {
       headers.set("Authorization", `Bearer ${accessToken}`);
     }
 

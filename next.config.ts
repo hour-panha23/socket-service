@@ -23,27 +23,6 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  async rewrites() {
-    return [
-      {
-        source: "/project",
-        destination: "http://localhost:4000/project",
-      },
-      {
-        source: "/project/:path*",
-        destination: "http://localhost:4000/project/:path*",
-      },
-      {
-        source: "/project",
-        destination: "https://decorated-unzip-outer.ngrok-free.de/project",
-      },
-      {
-        source: "/project/:path*",
-        destination:
-          "https://decorated-unzip-outer.ngrok-free.de/project/:path*",
-      },
-    ];
-  },
 };
 
 export default nextConfig;

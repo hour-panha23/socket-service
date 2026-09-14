@@ -46,7 +46,13 @@ function decodeBase64Url(value: string): string | null {
       base64.length + ((4 - (base64.length % 4)) % 4),
       "=",
     );
-    return Buffer.from(padded, "base64").toString("utf8");
+    if (typeof Buffer !== "undefined") {
+      return Buffer.from(padded, "base64").toString("utf8");
+    }
+    if (typeof atob !== "undefined") {
+      return atob(padded);
+    }
+    return null;
   } catch {
     return null;
   }

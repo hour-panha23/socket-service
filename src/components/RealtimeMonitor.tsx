@@ -3,6 +3,7 @@
 
 import React, { useEffect, useState } from "react";
 import { Socket } from "socket.io-client";
+import { resolveSocketUrl } from "../lib/get-socket-url";
 import { logger } from "../lib/logger";
 import { buildSignedAuth } from "../lib/socket-auth";
 
@@ -247,8 +248,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
       const jsonBodyString = JSON.stringify(bodyPayload);
       const signedAuth = await buildSignedAuth(targetProjectId, secret);
 
-      const baseUrl =
-        process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+      const baseUrl = await resolveSocketUrl();
       const endpointUrl = `${baseUrl}/notifications/emit`;
 
       logger.info(
@@ -467,7 +467,7 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   </div>
                   <div>
                     <label className="block mb-0.5 text-[10px] text-slate-400">
-                      Target Topic
+                      Target Room
                     </label>
                     <input
                       type="text"
@@ -485,14 +485,14 @@ export const RealtimeMonitor: React.FC<RealtimeMonitorProps> = ({
                   disabled={!isConnected}
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 shadow-sm px-3 py-2 rounded-lg font-semibold text-white text-xs transition"
                 >
-                  Join Topic
+                  Join Room
                 </button>
                 <button
                   onClick={handleLeaveChannel}
                   disabled={!isConnected}
                   className="bg-rose-600/20 hover:bg-rose-600/30 disabled:opacity-50 px-3 py-2 border border-rose-500/30 rounded-lg font-semibold text-rose-400 text-xs transition"
                 >
-                  Leave Topic
+                  Leave Room
                 </button>
               </div>
               {roomStatus && (

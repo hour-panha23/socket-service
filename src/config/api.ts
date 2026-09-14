@@ -8,7 +8,7 @@ export const API_ENDPOINTS = {
   auth: {
     login: buildApiUrl("auth/login"),
     logout: buildApiUrl("auth/logout"),
-    refresh: buildApiUrl("auth/refresh-token"),
+    refresh: buildApiUrl("auth/refresh"),
   },
   project: {
     listProject: buildApiUrl("projects/list"),

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
+import { resolveSocketUrl } from "@/src/lib/get-socket-url";
 import { buildAdminSignedAuth, buildSignedAuth } from "@/src/lib/socket-auth";
 import React, {
   createContext,
@@ -52,9 +53,6 @@ interface SocketContextType {
   clearLogs: () => void;
 }
 
-const SOCKET_URL =
-  process.env.NEXT_PUBLIC_SOCKET_URL ?? "http://localhost:4000";
-
 const SocketContext = createContext<SocketContextType | null>(null);
 
 export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({
@@ -79,7 +77,7 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({
     setLogs((prev) => [...prev, { time, msg, type }]);
   };
 
-  const connectSocket = ({
+  const connectSocket = async ({
     appId,
     secret,
     mode,
@@ -93,7 +91,9 @@ export const SocketProvider: React.FC<{ children: React.ReactNode }> = ({
       socketRef.current.disconnect();
     }
 
-    const newSocket = io(`${SOCKET_URL}/notifications`, {
+    const socketUrl = await resolveSocketUrl();
+
+    const newSocket = io(`${socketUrl}/notifications`, {
       transports: ["websocket"],
       autoConnect: true,
       auth: async (cb) => {
